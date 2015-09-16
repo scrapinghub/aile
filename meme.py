@@ -3,6 +3,7 @@ import logging
 import random
 
 import numpy as np
+import scipy.optimize as opt
 import scrapely.htmlpage as hp
 
 
@@ -130,7 +131,7 @@ class MEME(object):
       expectation maximization.
       Bailey and Elkan, 1995
 
-    - Fitting a mixture model by expectation maximization to discover 
+    - Fitting a mixture model by expectation maximization to discover
       motifs in bipolymers.
       Bailey and Elkan, 1994
 
@@ -140,8 +141,6 @@ class MEME(object):
     The key phrase to search more papers is "motif discovery".
 
     TODO:
-        - EM starting points are currently selected randomly, instead of using
-          MEME heuristic.
         - Auto-selecting motif length.
     """
     def __init__(self, window=8, logger='default'):
@@ -152,6 +151,32 @@ class MEME(object):
             self.logger.setLevel(logging.INFO)
         else:
             self.logger = logger
+
+
+    def _roll(self, sequence):
+        return enumerate(
+            np.array([self.code_book.code(x) for x in window])
+            for _, window in sequence.roll(self.window))
+
+
+    def _start(self, X, gamma=0.1):
+        A = len(self.code_book)
+        W = len(X)
+        p = np.log(1.0/float(A))
+        m = opt.newton(
+            lambda m: (1.0 - m)*np.log((1.0 - m)/(A - 1)) - p + m*np.log(m) + gamma*p,
+            0.5
+        )
+        # Position Frequency Matrix
+        # columns    : one for each code_book letter
+        # row 0      : background frequency
+        # row 1 .. W : motif frequency
+        f = np.zeros((W + 1, A))
+        f[0, :] = self.code_book.frequencies
+        for j in xrange(W):
+            f[j + 1, :   ] = (1.0 - m)/(A - 1)
+            f[j + 1, X[j]] = m
+        return f
 
     @staticmethod
     def _score(X, f):
@@ -172,19 +197,14 @@ class MEME(object):
 
     def _fit_1(self, sequence, V, f, m, eps, max_iter, relax):
         """Run the Expectation-Maximization algorithm"""
-        def roll(sequence):
-            return enumerate(
-                np.array([self.code_book.code(x) for x in window])
-                for _, window in sequence.roll(self.window))
-
         W = self.window                        # size of window
-        n = self.code_book.total_count - W + 1 # number of windows
+        n = len(V)                             # number of windows
         it = 0                                 # current iteration
         E1 = None                              # previous expected log-likelihood
         while True:
             Z = np.zeros((n,)) # E[X[i] is motif]
             E2 = 0.0           # current expected log-likelihood
-            for i,  X in roll(sequence):
+            for i,  X in self._roll(sequence):
                 # pM: P(X|X is motif     )
                 # PB: P(X|X is background)
                 pM, pB = MEME._score(X, f)
@@ -204,7 +224,7 @@ class MEME(object):
             q0 = 0.0
             q1 = 0.0
             c = np.zeros(f.shape, dtype=float)
-            for i,  X in roll(sequence):
+            for i,  X in self._roll(sequence):
                 Z0 = 1.0 - Z[i]
                 Z1 = Z[i]*V[i]
                 for j, k in enumerate(X):
@@ -229,13 +249,13 @@ class MEME(object):
 
         return f, m, E2, Z
 
-    def fit(self, sequence, n_motifs=1, n_seeds=10, eps=1e-5, max_iter=100, relax=1e-2):
+    def fit(self, sequence, n_motifs=1, gamma=0.1, alpha=0.5, eps=1e-5, max_iter=100, relax=1e-2):
         self.code_book = CodeBook(sequence)
         self.n_motifs = n_motifs
 
-        A = len(self.code_book)                # alphabet size
-        W = self.window                        # window size
-        n = self.code_book.total_count - W + 1 # sequence length
+        A = len(self.code_book)                        # alphabet size
+        W = self.window                                # window size
+        n = sum(1 for _ in sequence.roll(self.window)) # sequence length
 
         self.em_objective = np.zeros((n_motifs,))
         self.position_frequency_matrix = np.zeros((n_motifs, W+1, A))
@@ -245,36 +265,36 @@ class MEME(object):
         V = np.ones((n,))
         for k in xrange(n_motifs):
             E = None
-            for s in xrange(n_seeds):
-                # Position Frequency Matrix
-                # columns    : one for each code_book letter
-                # row 0      : background frequency
-                # row 1 .. W : motif frequency
-                f0 = (1.0 - relax)*normalized(np.random.rand(W + 1, A)) + relax
-                # A priori probability of motif
-                m0 = np.random.random()
+            m0 = 1.0/n
+            while m0 < 1.0/W:
+                Q = max(1, np.log(1.0 - alpha)/np.log(1.0 - m0))
+                # Select subsequences as seeds
+                r = set(np.random.randint(0, n, Q))
+                seeds = []
+                for i, X in self._roll(sequence):
+                    if i in r:
+                        seeds.append(X)
+                for s, seed in enumerate(seeds):
+                    f0 = self._start(seed, gamma)
+                    f1, m1, E1, Z1 = self._fit_1(sequence, V, f0, m0, eps, max_iter, relax)
+                    if not E or E1 > E:
+                        f, m, E, Z = f1, m1, E1, Z1
+                    if self.logger:
+                        self.logger.info(
+                            'MEME.fit: pass={0}, m={1:.2e}, seed={2}, E[log(P)]={3:.2e}, best={4:.2e}'.format(
+                                k, m0, s, E1, E))
+                m0 *= 2.0
 
-                f1, m1, E1, Z1 = self._fit_1(sequence, V, f0, m0, eps, max_iter, relax)
-
-                if not E or E1 > E:
-                    f = f1
-                    m = m1
-                    E = E1
-                    Z = Z1
-
-                if self.logger:
-                    self.logger.info(
-                        'MEME.fit: pass={0}, seed={1}, E[log(P)]={2:.2e}, best={3:.2e}'.format(k, s, E1, E))
+            # Save motif
+            self.em_objective[k] = E
+            self.position_frequency_matrix[k,:,:] = f
+            self.motif_probability[k] = m
 
             # Update erasure
             for i in xrange(n):
                 U[i] *= 1.0 - V[i]*Z[max(0, i - W + 1):(i + 1)].max()
             for i in xrange(n):
                 V[i] = U[i:(i+W)].min()
-
-            self.em_objective[k] = E
-            self.position_frequency_matrix[k,:,:] = f
-            self.motif_probability[k] = m
 
         self._motif_threshold = np.log((1.0 - self.motif_probability)/self.motif_probability)
 
@@ -306,6 +326,13 @@ class MotifMatch(object):
         self.group = group
         self.score = score
         self.motif = motif
+
+    def __str__(self):
+        return 'index={0}, group={1}, score={2:.2e}, motif={3}'.format(
+            self.index, self.group, self.score, self.motif)
+
+    def __repr__(self):
+        return self.__str__()
 
 
 def demo1():
