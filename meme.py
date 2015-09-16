@@ -1,5 +1,4 @@
 import collections
-import itertools
 import logging
 import random
 
@@ -33,19 +32,28 @@ class Sequence(object):
         return iter(self._iterable)
 
     def roll(self, window_size):
-        it = itertools.dropwhile(
-            lambda x: not self.start_at(x), iter(self._iterable))
-        window = collections.deque(
-            itertools.islice(it, window_size) , maxlen=window_size)
+        window = collections.deque([], maxlen=window_size)
+        it = enumerate(iter(self._iterable))
+        # Make sure to start at a valid element
+        for i, element in it:
+            if self.start_at(element):
+                window.append(element)
+                break
+        # Initial fill of the window
+        for i, element in it:
+            window.append(element)
+            if len(window) == window_size:
+                break
         if len(window) > 0:
-            yield tuple(window)
+            yield (i - window_size + 1, tuple(window))
         else:
             return
-        for element in it:
+        # Return windows at valid starting positions
+        for i, element in it:
             window.popleft()
             window.append(element)
             if self.start_at(window[0]):
-                yield tuple(window)
+                yield (i - window_size + 1, tuple(window))
 
 
 class HTMLSequence(Sequence):
@@ -92,7 +100,7 @@ class CodeBook(object):
         """
         return self._index.get(letter, None)
 
-    def decode(self, sequence):
+    def decode(self, index):
         """Perform the inverse operation of code.
 
         Note: as in coding, if some symbol can't be found then insert None.
@@ -121,6 +129,10 @@ class MEME(object):
     - Unsupervised learning of multiple motifs in biopolymers using
       expectation maximization.
       Bailey and Elkan, 1995
+
+    - Fitting a mixture model by expectation maximization to discover 
+      motifs in bipolymers.
+      Bailey and Elkan, 1994
 
     - The value of prior knowledge in discovering motifs with MEME.
       Bailey and Elkan, 1995
@@ -160,11 +172,10 @@ class MEME(object):
 
     def _fit_1(self, sequence, V, f, m, eps, max_iter, relax):
         """Run the Expectation-Maximization algorithm"""
-
         def roll(sequence):
             return enumerate(
                 np.array([self.code_book.code(x) for x in window])
-                for window in sequence.roll(self.window))
+                for _, window in sequence.roll(self.window))
 
         W = self.window                        # size of window
         n = self.code_book.total_count - W + 1 # number of windows
@@ -173,7 +184,7 @@ class MEME(object):
         while True:
             Z = np.zeros((n,)) # E[X[i] is motif]
             E2 = 0.0           # current expected log-likelihood
-            for i, X in roll(sequence):
+            for i,  X in roll(sequence):
                 # pM: P(X|X is motif     )
                 # PB: P(X|X is background)
                 pM, pB = MEME._score(X, f)
@@ -193,7 +204,7 @@ class MEME(object):
             q0 = 0.0
             q1 = 0.0
             c = np.zeros(f.shape, dtype=float)
-            for i, X in roll(sequence):
+            for i,  X in roll(sequence):
                 Z0 = 1.0 - Z[i]
                 Z1 = Z[i]*V[i]
                 for j, k in enumerate(X):
@@ -268,12 +279,33 @@ class MEME(object):
         self._motif_threshold = np.log((1.0 - self.motif_probability)/self.motif_probability)
 
     def find_motif(self, sequence):
-        for j, X in enumerate(sequence.roll(self.window)):
+        for i, X in sequence.roll(self.window):
             score = self.score(X)
             Z = np.log(score[:,0]/score[:,1])
             for k in xrange(self.n_motifs):
                 if Z[k] > self._motif_threshold[k]:
-                    yield j, k, Z[k], X
+                    yield MotifMatch(
+                        index=i,
+                        group=k,
+                        score=Z[k],
+                        motif=X
+                    )
+
+
+class MotifMatch(object):
+    def __init__(self, index, group, score, motif):
+        """The results of MEME.find_motif.
+
+        Fields:
+            - index: position of the motif inside the sequence
+            - group: integer identifying the matching motif group
+            - score: the higher the better
+            - motif: the matched sub-sequence
+        """
+        self.index = index
+        self.group = group
+        self.score = score
+        self.motif = motif
 
 
 def demo1():
@@ -297,12 +329,12 @@ def demo1():
     m = MEME(3)
     m.fit(Sequence(s), 2)
     print s
-    for i, j, score, motif in m.find_motif(Sequence(s)):
-        if i in t:
-            print (i-1)*' ' + '>' + ''.join(motif) + '<'
-            t.remove(i)
+    for match in m.find_motif(Sequence(s)):
+        if match.index in t:
+            print (match.index - 1)*' ' + '>' + ''.join(match.motif) + '<'
+            t.remove(match.index)
         else:
-            print (i-1)*' ' + 'x' + ''.join(motif) + 'x'
+            print (match.index - 1)*' ' + 'x' + ''.join(match.motif) + 'x'
     if t:
         print 'Missing:'
         print s
@@ -315,8 +347,14 @@ def demo2():
     s = HTMLSequence(p)
     m = MEME(4)
     m.fit(s, 1)
-    for x in m.find_motif(s):
-        print x[3]
+    for match in m.find_motif(s):
+        print 80*'-'
+        print 'SCORE =', match.score
+        print 'GROUP =', match.group
+        print 'MOTIF =', match.motif
+        print 'HTML'
+        print '****'
+        print p.body[s.tags[match.index].start:s.tags[match.index+3].end]
 
 
 if __name__ == '__main__':
