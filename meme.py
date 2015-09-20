@@ -32,7 +32,7 @@ def log_range(start, stop, step, endpoint=True):
 
 
 class Sequence(object):
-    def __init__(self, iterable, start_at=lambda x: True):
+    def __init__(self, iterable):
         """Iterate over iterable using windows of the given size.
 
         For example:
@@ -51,7 +51,6 @@ class Sequence(object):
         [5, 6, 7]
         """
         self._iterable = iterable
-        self.start_at = start_at
 
     def __iter__(self):
         return iter(self._iterable)
@@ -65,11 +64,6 @@ class Sequence(object):
     def roll(self, window_size):
         window = collections.deque([], maxlen=window_size)
         it = enumerate(iter(self._iterable))
-        # Make sure to start at a valid element
-        for i, element in it:
-            if self.start_at(element):
-                window.append(element)
-                break
         # Initial fill of the window
         for i, element in it:
             window.append(element)
@@ -79,12 +73,11 @@ class Sequence(object):
             yield (i - window_size + 1, tuple(window))
         else:
             return
-        # Return windows at valid starting positions
+        # Return windows
         for i, element in it:
             window.popleft()
             window.append(element)
-            if self.start_at(window[0]):
-                yield (i - window_size + 1, tuple(window))
+            yield (i - window_size + 1, tuple(window))
 
 
 class HTMLSequence(Sequence):
@@ -95,9 +88,27 @@ class HTMLSequence(Sequence):
             lambda fragment: isinstance(fragment, hp.HtmlTag),
             html.parsed_body)
         super(HTMLSequence, self).__init__(
-            [(x.tag, x.tag_type) for x in self.tags],
-            start_at=lambda x: x[1] == hp.HtmlTagType.OPEN_TAG
-        )
+            [(x.tag, x.tag_type) for x in self.tags])
+
+    def roll(self, window_size):
+        def balanced(window):
+            stack = []
+            for tag, tag_type in window:
+                if tag_type == hp.HtmlTagType.OPEN_TAG:
+                    stack.append((tag, tag_type))
+                elif tag_type == hp.HtmlTagType.CLOSE_TAG:
+                    try:
+                        last_tag, last_tag_type = stack.pop()
+                    except IndexError:
+                        return False
+                    if (last_tag_type != hp.HtmlTagType.OPEN_TAG or
+                        last_tag != tag):
+                        return False
+            return not stack
+
+        return ((i, window)
+                for (i, window) in super(HTMLSequence, self).roll(window_size)
+                if balanced(window))
 
 
 class TestSequence(Sequence):
@@ -386,13 +397,18 @@ class MEME(object):
             W3 = G3 = None
             f3 = m3 = E3 = Z3 = None
             for W in xrange(window_min, window_max + 1):
+                I = [i for i, X in self._roll(sequence, W)]
+                N = len(I)
+                if N == 0:
+                    self.logger.info('MEME.fit: no sequences of length {0}'.format(W))
+                    continue
                 f2 = m2 = E2 = Z2 = None
                 for m0 in log_range(1.0/n, 1.0/W, 2.0):
                     # Number of seeds
-                    Q = int(max(1, np.log(1.0 - alpha)/np.log(1.0 - m0)))
+                    Q = min(N,
+                            max(1,
+                                int(np.log(1.0 - alpha)/np.log(1.0 - m0))))
                     # Select subsequences as seeds
-                    I = [i for i, X in self._roll(sequence, W)]
-                    N = len(I)
                     r = random.sample(I, Q)
                     seeds = [X for i, X in self._roll(sequence, W) if i in r]
                     f1, m1, E1, Z1 = self._fit_2(
@@ -525,7 +541,7 @@ def demo2():
     page = hp.url_to_page('https://news.ycombinator.com/')
     meme = MEME()
     s = HTMLSequence(page)
-    meme.fit(s, 8, 20)
+    meme.fit(s, 4, 50)
     for x in meme.find_motif(s, 0):
         print 80*'-'
         print page.body[
@@ -533,4 +549,4 @@ def demo2():
 
 
 if __name__ == '__main__':
-    demo1()
+    demo2()
