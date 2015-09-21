@@ -2,6 +2,7 @@ import collections
 import logging
 import random
 import string
+import itertools
 
 import numpy as np
 import scipy.optimize as opt
@@ -90,6 +91,14 @@ class HTMLSequence(Sequence):
         super(HTMLSequence, self).__init__(
             [(x.tag, x.tag_type) for x in self.tags])
 
+    @staticmethod
+    def generic_close_tag(element):
+        tag, tag_type = element
+        return '/>' if tag_type == hp.HtmlTagType.CLOSE_TAG else tag
+
+    def __iter__(self):
+        return itertools.imap(HTMLSequence.generic_close_tag, self._iterable)
+
     def roll(self, window_size):
         def balanced(window):
             stack = []
@@ -106,7 +115,7 @@ class HTMLSequence(Sequence):
                         return False
             return not stack
 
-        return ((i, window)
+        return ((i, map(HTMLSequence.generic_close_tag, window))
                 for (i, window) in super(HTMLSequence, self).roll(window_size)
                 if balanced(window))
 
