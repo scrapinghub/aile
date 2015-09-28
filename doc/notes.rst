@@ -167,7 +167,7 @@ motif width :math:`W=6`, where we start from state :math:`m_2`:
    .. figure:: _static/PHMM_2.svg
       :align: center
 
-.. only:: html
+.. only:: latex
 
    .. figure:: _static/PHMM_2.pdf
       :align: center
