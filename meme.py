@@ -1,35 +1,13 @@
 import collections
-import logging
 import random
 import string
 import itertools
 
 import numpy as np
-import scipy.optimize as opt
-import scipy.stats as stats
 import scrapely.htmlpage as hp
 import tabulate
 
-
-def normalized(P):
-    """Return an stochastic matix (all rows sum to 1), proportional to P"""
-    return (P.T/P.sum(axis=1)).T
-
-
-def log_range(start, stop, step, endpoint=True):
-    """From start to stop, multiplying with step.
-
-    Example:
-        print list(log_range(1.5, 5.0, 2.0))
-
-        Output: [1.5, 3.0, 6.0]
-    """
-    x = start
-    while x < stop:
-        yield x
-        x *= step
-    if endpoint:
-        yield x
+import util
 
 
 class Sequence(object):
@@ -185,50 +163,7 @@ class TestSequence(Sequence):
         return r
 
 
-class CodeBook(object):
-    """
-    Map symbols to integers, allowing to code and decode sequences using
-    this mapping
-    """
-    def __init__(self, sequence):
-        self.counter = collections.Counter(sequence)
-        self.letters = sorted(set(self.counter))
-        self._index = {
-            letter: index
-            for index, letter in enumerate(self.letters)
-        }
-        self.total_count = sum(self.counter.values())
-        self.frequencies = np.array(
-            [self.counter[letter] for letter in self.letters],
-            dtype=float
-        )
-        self.frequencies /= float(self.total_count)
-
-    def __len__(self):
-        """Number of symbols"""
-        return len(self.letters)
-
-    def code(self, letter):
-        """Convert letter to integer.
-
-        Note: if letter is not in the code book then insert None
-        inside the output sequence.
-        """
-        return self._index.get(letter, None)
-
-    def decode(self, index):
-        """Perform the inverse operation of code.
-
-        Note: as in coding, if some symbol can't be found then insert None.
-        """
-        N = len(self.letters)
-        if index >= 0 and index < N:
-            return self.letters[index]
-        else:
-            return None
-
-
-class MEME(object):
+class MEME(util.Logged):
     """Implementation of the MEME algorithm.
 
     MEME tries to find repeating patterns inside an stream of symbols. It was
@@ -251,35 +186,13 @@ class MEME(object):
     The key phrase to search more papers is "motif discovery".
     """
     def __init__(self, logger='default'):
-        if logger is 'default':
-            logging.basicConfig()
-            self.logger = logging.getLogger()
-            self.logger.setLevel(logging.INFO)
-        else:
-            self.logger = logger
+        super(MEME, self).__init__(logger)
+
 
     def _roll(self, sequence, W):
         return ((i, np.array([self.code_book.code(x) for x in window]))
                 for i, window in sequence.roll(W))
 
-    def _start(self, X, gamma=0.1):
-        A = len(self.code_book)
-        W = len(X)
-        def g(m):
-            p = np.log(1.0/float(A))
-            return (1.0 - m)*np.log((1.0 - m)/(A - 1)) - p + m*np.log(m) + gamma*p
-        m = opt.newton(g, 0.95)
-        # Position Frequency Matrix
-        # columns    : one for each code_book letter
-        # row 0      : background frequency
-        # row 1 .. W : motif frequency
-        f = np.zeros((W + 1, A))
-        f[0, :] = self.code_book.frequencies
-        for j in xrange(W):
-            f[j + 1, :   ] = (1.0 - m)/(A - 1)
-            f[j + 1, X[j]] = m
-        f = normalized(np.random.rand(W+1, A))
-        return f
 
     @staticmethod
     def _score(X, f):
@@ -290,9 +203,6 @@ class MEME(object):
             pB *= f[0    , k]
         return pM, pB
 
-    @staticmethod
-    def _model_score(logP0, logP1, fp):
-        return stats.chi2.sf(2.0*(logP1 - logP0), fp)**(1.0/fp)
 
     def score(self, X, k=0):
         """Return the motif and background probabilities of seeing the
@@ -350,7 +260,7 @@ class MEME(object):
                 qB += ZB
                 qM += ZM
             m2 = qM/(qB + qM)
-            f2 = (1.0 - relax)*normalized(c) + relax
+            f2 = (1.0 - relax)*util.normalized(c) + relax
             # Check convergence
             if E1:
                 err = (E1 - E2)/E1
@@ -373,7 +283,7 @@ class MEME(object):
         """Call EM for the given seeds"""
         f2 = m2 = E2 = Z2 = None
         for s, seed in enumerate(seeds):
-            f0 = self._start(seed, gamma)
+            f0 = util.guess_emissions(self.code_book, seed, gamma)
             f1, m1, E1, Z1 = self._fit_1(sequence, V, f0, m0, eps, max_iter, relax)
             if not E2 or E1 > E2:
                 f2, m2, E2, Z2 = f1, m1, E1, Z1
@@ -385,7 +295,7 @@ class MEME(object):
         if window_max is None:
             window_max = window_min
 
-        self.code_book = CodeBook(sequence)
+        self.code_book = util.CodeBook(sequence)
         self.n_motifs = n_motifs
 
         A = len(self.code_book)         # alphabet size
@@ -412,7 +322,7 @@ class MEME(object):
                     self.logger.info('MEME.fit: no sequences of length {0}'.format(W))
                     continue
                 f2 = m2 = E2 = Z2 = None
-                for m0 in log_range(1.0/n, 1.0/W, 2.0):
+                for m0 in util.log_range(1.0/n, 1.0/W, 2.0):
                     # Number of seeds
                     Q = min(N,
                             max(1,
@@ -428,7 +338,7 @@ class MEME(object):
                     if not E2 or E1 > E2:
                         f2, m2, E2, Z2 = f1, m1, E1, Z1
 
-                G2 = MEME._model_score((W/W0)*N*logP0, E2, (W - W0)*(A - 1))
+                G2 = util.model_score((W/W0)*N*logP0, E2, (W - W0)*(A - 1))
                 if self.logger:
                     self.logger.info(
                         'MEME.fit E1={0} G={1}'.format(E2, G2))
