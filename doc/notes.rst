@@ -167,7 +167,7 @@ motif width :math:`W=6`, where we start from state :math:`m_2`:
    .. figure:: _static/PHMM_2.svg
       :align: center
 
-.. only:: html
+.. only:: latex
 
    .. figure:: _static/PHMM_2.pdf
       :align: center
@@ -523,7 +523,7 @@ We will enforce the constraints using `Lagrange multipliers
 
 .. math::
 
-   \frac{\partial}{\partial \pmb{f}^B,\lambda_j}\left\{\log P(\pmb{f}^M) + E^{1M} - \lambda_jg_j\right\} = 0
+   \frac{\partial}{\partial \pmb{f}^M,\lambda_j}\left\{\log P(\pmb{f}^M) + E^{1M} - \lambda_jg_j\right\} = 0
 
 If we use `Dirichlet distribution
 <https://en.wikipedia.org/wiki/Dirichlet_distribution>`_ over the
@@ -546,7 +546,7 @@ From this we get the closed form solution:
 
 .. math::
 
-   \tilde{f}^M_{ja} &= \sum_{i=1}^n[x_i^D=a]\sum_{j=1}^W \gamma_i(m_j) \\
+   \tilde{f}^M_{ja} &= \sum_{i=1}^n[x_i^D=a]\gamma_i(m_j) \\
    f^M_{ja} &=
    \frac{ \varepsilon_a - 1 + \tilde{f}^M_{ja}}{\varepsilon_0 - 1 +
    \sum_{a \in \pmb{A}}\tilde{f}^M_{ja}}
@@ -618,17 +618,17 @@ We rewrite the summation as:
 
    E^{2M}(\pmb{t}^M) &=  \sum_{i=1}^n\sum_{j=1}^W
        \left\{
-          \xi_i(b_{j+1}, m_j)\log P(b_{j+1}|m_j, \pmb{t}^M) + 
+          \xi_i(m_j, b_{j+1})\log P(b_{j+1}|m_j, \pmb{t}^M) +
           \sum_{l=0}^{W-1}\xi_i(m_j,m_{K_{jl}})\log P(m_{K_{jl}}|m_j,
           \pmb{t}^M)
        \right\} \\
                      &= \sum_{i=1}^n\sum_{j=1}^W
        \left\{
-          \xi_i(b_{j+1}, m_j)\log m_b + 
+          \xi_i(m_j, b_{j+1})\log m_b +
           \sum_{l=0}^{W-1}\xi_i(m_j,m_{K_{jl}})
           \log \left[m_dF(l, d) + [l=W-1]m \right]
        \right\} \\
-                     &= \left(\sum_{i=1}^n\sum_{j=1}^W \xi_i(b_{j+1}, m_j)\right)\log m_b  + \\ 
+                     &= \left(\sum_{i=1}^n\sum_{j=1}^W \xi_i(m_j, b_{j+1})\right)\log m_b  + \\
                      & \quad
 		     \sum_{l=0}^{W-1}\left(\sum_{i=1}^n\sum_{j=1}^W\xi_i(m_j,
 		     m_{K_{jl}})\right)\log \left[m_d F(l,d) +
