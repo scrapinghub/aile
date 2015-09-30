@@ -1,4 +1,5 @@
 import random
+import itertools
 
 import numpy as np
 import scipy.optimize as opt
@@ -43,6 +44,7 @@ class FixedHMM(util.Logged):
         assert value.shape == (self.S,)
 
         self._pZ = value
+        self.logPZ = np.log(np.where(self._pZ>0, self._pZ, 1e-100))
         self.dist_z = util.Categorical(self.pZ)
 
     @property
@@ -78,7 +80,7 @@ class FixedHMM(util.Logged):
         X[0] = self.dist_e[Z[0]].sample()
         for i in xrange(1, n):
             Z[i] = self.dist_t[Z[i-1]].sample()
-            X[i] = self.dist_e[Z[i-1]].sample()
+            X[i] = self.dist_e[Z[i  ]].sample()
         return X, Z
 
 
@@ -135,6 +137,28 @@ class FixedHMM(util.Logged):
             self.logE += self.gamma[:,i].dot(self.logPE[:,X[i]])
             self.logE += np.sum(self.xi[:, :, i]*self.logPT)
 
+
+    def viterbi(self, X):
+        n = len(X)
+
+        delta = np.zeros((self.S, n))
+        psi = np.zeros((self.S, n), dtype=int)
+
+        # log P(Z1, X1)
+        delta[:, 0] = self.logPZ + self.logPE[:, X[0]]
+        for i in xrange(1, n):
+            m = self.logPT.T + delta[:, i - 1]
+            psi[: ,i] = np.argmax(m, axis=1)
+            # log P(Z1, .., Zi=j, X1, ..., Xi)
+            delta[:, i] = m[np.arange(self.S), psi[:, i]] + self.logPE[:, X[i]]
+
+        z = np.zeros((n,), dtype=int)
+        z[n - 1] = np.argmax(delta[:, n - 1])
+        logP = delta[z[n - 1], n - 1]
+        for i in xrange(n - 1, 0, -1):
+            z[i - 1] = psi[z[i], i]
+
+        return z, logP
 
 
 class ProfileHMM(FixedHMM):
@@ -341,6 +365,10 @@ class ProfileHMM(FixedHMM):
         return best_W
 
 
+def phmm_cmp(W, Z1, Z2):
+    return ((Z1 >= W) != (Z2 >= W)).mean()
+
+
 if __name__ == '__main__':
     phmm_true = ProfileHMM(
         f=np.array([
@@ -349,12 +377,14 @@ if __name__ == '__main__':
             [0.2, 0.8, 0.0, 0.0],
             [0.0, 0.0, 0.8, 0.2]]),
         t = np.array([
-            0.8, 0.05, 0.05, 0.9, 0.05])
+            0.9, 0.1, 0.05, 0.85, 0.1])
     )
 
-    X, Z = phmm_true.generate(1000)
-    phmm = ProfileHMM.fit(X, 2, 4)
-    print phmm_true.f
-    print phmm.f
-    print phmm_true.t
-    print phmm.t
+    X, Z = phmm_true.generate(10000)
+    phmm = ProfileHMM.fit(X, 3)
+
+    print "True model 't' parameters", phmm_true.t
+    print " Estimated 't' paramaters", phmm.t
+
+    z, logP = phmm.viterbi(X)
+    print 'Error finding motifs (% mismatch):', phmm_cmp(phmm.W, Z, z)*100
