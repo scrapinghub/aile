@@ -4,6 +4,8 @@ This repository is a temporary container for experiments in automatic extraction
 At some later point I will merge the surviving algorithms either in [scrapely](https://github.com/scrapy/scrapely) 
 or [portia](https://github.com/scrapinghub/portia).
 
+I document my ideas and algorithms descriptions at [readthedocs](http://aile.readthedocs.org/en/latest/).
+
 The current approach is based on the HTML code of the page, treated as a stream of HTML tags as processed by 
 [scrapely](https://github.com/scrapy/scrapely). 
 
