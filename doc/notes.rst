@@ -121,7 +121,7 @@ between states:
 |                         +------------+----------------+----------------+----------------+
 |                         | :math:`b_j`| :math:`b_{j+1}`| :math:`m_{j+1}`| :math:`d_{j+1}`|
 +------------+------------+------------+----------------+----------------+----------------+
-|            | :math:`b_j`| b          | 0              | 1 - b          | 0              |
+|            | :math:`b_j`| b(j)       | 0              | 1 - b(j)       | 0              |
 |            +------------+------------+----------------+----------------+----------------+
 | From state | :math:`m_j`| 0          | :math:`m_b`    | :math:`m`      | :math:`m_d`    |
 |            +------------+------------+----------------+----------------+----------------+
@@ -130,7 +130,11 @@ between states:
 
 
 To avoid introducing too much parameters we have assumed that the
-transition probabilities are stationary.
+transition probabilities are stationary, the only exception being:
+
+.. math::
+
+   b(j) = b_{out}[j=W] + b_{in}[j\neq W]
 
 Now let's define the random variable :math:`Z_i` as the state of the
 process when emitting symbol :math:`X_i`. Then the range of :math:`Z_i` is:
@@ -252,8 +256,8 @@ The transitions starting from a background states are trivial:
 
 .. math::
 
-   P\left(Z_{i+1}=b_j|Z_i=b_j\right) &= b \\
-   P\left(Z_{i+1}=m_j|Z_i=b_j\right) &= 1 - b
+   P\left(Z_{i+1}=b_j|Z_i=b_j\right) &= b(j) \\
+   P\left(Z_{i+1}=m_j|Z_i=b_j\right) &= 1 - b(j)
 
 The emission probabilities:
 
@@ -263,7 +267,32 @@ The emission probabilities:
    P\left(X_i=a|Z_i=m_j\right) &= f^M_{ja}
 
 
-Parameter estimation
+Manual annotations
+~~~~~~~~~~~~~~~~~~
+We extend the model with a random variable :math:`U_i` for each :math:`Z_i`:
+
+.. only:: html
+
+   .. figure:: _static/HMM_2.svg
+      :align: center
+      :figwidth: 60 %
+
+.. only:: latex
+
+   .. figure:: _static/HMM_2.pdf
+      :align: center
+      :figwidth: 60 %
+
+These random variables are direct observations on the state variables that flag
+whether or not a hidden state is part of a motif:
+
+.. math::
+
+   U_i = [Z_i \in \pmb{S}^m]
+
+We can use this to aid in detecting motifs. For example, a user can manually 
+annotate where motifs are by specifying the value of :math:`U_i`.
+
 --------------------
 
 Expectation-Maximization (EM)
@@ -275,7 +304,8 @@ vector:
 .. math::
 
    \pmb{\theta} &= \left(\pmb{t}, \pmb{f}^B, \pmb{f}^M\right) \\
-   \pmb{t} &= \left(b, \pmb{t}^M\right) \\
+   \pmb{t} &= \left(\pmb{b}, \pmb{t}^M\right) \\
+   \pmb{b} &= (b_{in}, b_{out}) \\
    \pmb{t}^M &= \left(d, m_d, m, m_b\right)
 
 Using `EM
@@ -460,7 +490,7 @@ And also:
 .. math::
 
    E^2(\pmb{t}) &= E^{2B}(b) + E^{2M}(\pmb{t}^M) \\
-   E^{2B}(b) &= \sum_{i=1}^n\sum_{s_1 \in \pmb{S}^B}\sum_{s_2 \in \pmb{S}}\xi_i(s_1,s_2)\log P(s_2|s_1, b) \\
+   E^{2B}(\pmb{b}) &= \sum_{i=1}^n\sum_{s_1 \in \pmb{S}^B}\sum_{s_2 \in \pmb{S}}\xi_i(s_1,s_2)\log P(s_2|s_1, \pmb{b}) \\
    E^{2M}(\pmb{t}^M) &= \sum_{i=1}^n\sum_{s_1 \in \pmb{S}^M}\sum_{s_2 \in \pmb{S}}\xi_i(s_1,s_2)\log P(s_2|s_1, \pmb{t}^M)
 
  
@@ -470,7 +500,7 @@ We have now 4 independent maximization problems:
 
    \left(\pmb{f}^B\right)^1 &= \underset{\pmb{f}^B}{\arg \max}E^{1B}\\
    \left(\pmb{f}^M\right)^1& = \underset{\pmb{f}^M}{\arg \max}\left\{\log P(\pmb{f}^M) + E^{1M}\right\} \\
-   b^1 &= \underset{b}{\arg \max} E^{2B} \\
+   \pmb{b}^1 &= \underset{\pmb{b}}{\arg \max} E^{2B} \\
    \left(\pmb{t}^M\right)^1 &= \underset{\pmb{t}^M}{\arg \max} E^{2M}
    
 
@@ -565,15 +595,18 @@ We need to solve:
 
 .. math::
 
-   b^1 = \underset{b}{\arg \max} E^{2B}
+   \pmb{b}^1 = \underset{\pmb{b}}{\arg \max} E^{2B}
 
 Taking derivatives we get:
 
 .. math::
 
-   b^1 = \frac{\sum_{i=1}^n\sum_{j=1}^W \xi_i(b_j, b_j)}{
-   \sum_{i=1}^n\sum_{j=1}^W \xi_i(b_j, b_j) + 
-   \sum_{i=1}^n\sum_{j=1}^W \xi_i(b_j, m_j)}
+   b_{in}^1 &= \frac{\sum_{i=1}^n\sum_{j=2}^W \xi_i(b_j, b_j)}{
+   \sum_{i=1}^n\sum_{j=2}^W \xi_i(b_j, b_j) + 
+   \sum_{i=1}^n\sum_{j=2}^W \xi_i(b_j, m_j)} \\
+   b_{out}^1 &= \frac{\sum_{i=1}^n\xi_i(b_1, b_1)}{
+   \sum_{i=1}^n \xi_i(b_1, b_1) + 
+   \sum_{i=1}^n \xi_i(b_1, m_1)}
 
 Estimation of :math:`\pmb{t}^M`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

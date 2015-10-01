@@ -1,5 +1,4 @@
 import random
-import itertools
 
 import numpy as np
 import scipy.optimize as opt
@@ -172,14 +171,14 @@ class ProfileHMM(FixedHMM):
                 f[1:, :] Motif emission probabilities
 
            - t: vector (5, )
-                t = [b, d, mb, m, md]
-                    - b : probability of staying at background state
+                t = [b_in, b_out, d, mb, m, md]
+                    - b_in  : probability of staying at background state 2..W
+                    - b_out : probability of staying at background state 1
+                    - d     : probability of staying at a delete state
 
-                    - d : probability of staying at a delete state
-
-                    - mb: probability of switching from motif to background
-                    - m : probability of staying at motid
-                    - md: probability of switching from motif to delete state
+                    - mb    : probability of switching from motif to background
+                    - m     : probability of staying at motid
+                    - md    : probability of switching from motif to delete state
 
                           mb + m + md = 1
         """
@@ -205,13 +204,15 @@ class ProfileHMM(FixedHMM):
 
 
     def calc_pT(self, t):
-        b, d, mb, m, md = t
+        b_in, b_out, d, mb, m, md = t
         pT = np.zeros((self.S, self.S))
         F = md*(d**np.arange(self.W))*(1-d)/(1 - d**self.W)
-        for j in xrange(self.W):
-            pT[j, j         ] = b     # b[j] -> b[j]
-            pT[j, self.W + j] = 1 - b # b[j] -> m[j]
-
+        pT[0,      0] = b_out
+        pT[0, self.W] = 1 - b_out
+        for j in xrange(1, self.W):
+            pT[j, j         ] = b_in     # b[j] -> b[j]
+            pT[j, self.W + j] = 1 - b_in # b[j] -> m[j]            
+        for j in xrange(self.W):            
             pT[self.W + j, (j + 1) % self.W] = mb    # m[j] -> b[j + 1]
             for k in xrange(self.W):
                 pT[self.W + j, self.W + k] = F[(k - j - 2) % self.W]
@@ -262,10 +263,11 @@ class ProfileHMM(FixedHMM):
 
             b1 = 0.0
             b2 = 0.0
-            for j in xrange(self.W):
+            for j in xrange(1, self.W):
                 b1 += c[j,          j] # stay at background
                 b2 += c[j, self.W + j] # switch from background to motif
-            b = b1/(b1 + b2)
+            b_in = b1/(b1 + b2)
+            b_out = c[0, 0]/(c[0,0] + c[0, self.W])
 
             k0 = 0.0
             k1 = np.zeros((self.W,))
@@ -286,7 +288,7 @@ class ProfileHMM(FixedHMM):
             prange = (1e-6, 1.0 - 1e-6)
             res = opt.fmin_slsqp(
                 func        = g,
-                x0          = self.t[1:],
+                x0          = self.t[2:],
                 bounds      = 4*[prange],
                 eqcons      = [lambda x: x[1:].sum() - 1.0],
                 iprint      = 0
@@ -307,7 +309,7 @@ class ProfileHMM(FixedHMM):
                 break
 
             self.f = f
-            self.t = np.array([b, d, mb, m, md])
+            self.t = np.array([b_in, b_out, d, mb, m, md])
 
     @classmethod
     def fit(cls, sequence, window_min, window_max=None,
@@ -330,16 +332,16 @@ class ProfileHMM(FixedHMM):
         for W in xrange(window_min, window_max + 1):
             logE = None
             best_seed = None
-            for b in np.linspace(0, 1, steps, endpoint=False)[1:]:
+            for b_out in np.linspace(0, 1, steps, endpoint=False)[1:]:
                 for d in np.linspace(0, 1, steps, endpoint=False)[1:]:
                     for s in xrange(n_seeds):
                         # pick a random subsequence
                         i = random.randint(0, len(X) - W - 1)
                         f0 = util.guess_emissions(code_book, X[i:i + W])
-                        t0 = np.random.rand(5)
-                        t0[0] = b
-                        t0[1] = d
-                        t0[2:] /= t0[2:].sum()
+                        t0 = np.random.rand(6)
+                        t0[1] = b_out
+                        t0[2] = d
+                        t0[3:] /= t0[2:].sum()
                         eps = 1.0 + 1e-3*f0[0,:]
                         p0 = np.repeat(1.0/(2*W), 2*W)
 
@@ -350,7 +352,7 @@ class ProfileHMM(FixedHMM):
                             logE = hmm.logE
                             best_seed = hmm
                     hmm.logger.info(
-                        'ProfileHMM.fit b = {0:.2e} d = {1:.2e} logE = {2:.2e}'.format(b, d, logE))
+                        'ProfileHMM.fit b_out = {0:.2e} d = {1:.2e} logE = {2:.2e}'.format(b_out, d, logE))
             G2 = util.model_score(n*logP0, logE, (W - W0)*(A - 1))
             hmm.logger.info(
                 'ProfileHMM.fit W = {0} E1 = {1} G = {2}'.format(W, logE, G2))
@@ -380,10 +382,10 @@ def demo1():
             [0.2, 0.8, 0.0, 0.0],
             [0.0, 0.0, 0.8, 0.2]]),
         t = np.array([
-            0.9, 0.1, 0.05, 0.85, 0.1])
+            0.05, 0.9, 0.1, 0.05, 0.85, 0.1])
     )
 
-    X, Z = phmm_true.generate(10000)
+    X, Z = phmm_true.generate(1000)
     phmm = ProfileHMM.fit(X, 3)
 
     print "True model 't' parameters", phmm_true.t
