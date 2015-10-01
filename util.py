@@ -10,6 +10,10 @@ def eq_delta(a, b, eps=1e-3):
     return np.all(np.logical_and(b - eps <= a, a <= b + eps))
 
 
+def safe_log(x, l=1e-100):
+    return np.log(np.where(x < l, l, x))
+
+
 def normalized(P):
     """Return an stochastic matrix (all rows sum to 1), proportional to P"""
     return (P.T/P.sum(axis=1)).T

@@ -3,6 +3,7 @@ import itertools
 
 import numpy as np
 import scipy.optimize as opt
+import scrapely.htmlpage as hp
 
 import util
 
@@ -237,6 +238,7 @@ class ProfileHMM(FixedHMM):
         self.pE = self.calc_pE(value)
 
     def fit_em(self, sequence, precision=1e-5, max_iter=100):
+        X = sequence
         n = len(sequence)
 
         it = 0
@@ -278,7 +280,7 @@ class ProfileHMM(FixedHMM):
                 d, mb, m, md = tM
                 s = md*(d**np.arange(self.W))*(1 - d)/(1 - d**self.W)
                 s[self.W - 1] += m
-                r = -(k0*np.log(mb) + k1.dot(np.log(s)))
+                r = -k0*util.safe_log(mb) - k1.dot(util.safe_log(s))
                 return r
 
             prange = (1e-6, 1.0 - 1e-6)
@@ -309,7 +311,7 @@ class ProfileHMM(FixedHMM):
 
     @classmethod
     def fit(cls, sequence, window_min, window_max=None,
-            gamma=0.1, n_seeds=1, precision=1e-5, max_iter=200):
+            gamma=0.1, steps=4, n_seeds=1, precision=1e-5, max_iter=200):
         if window_max is None:
             window_max = window_min
 
@@ -328,8 +330,8 @@ class ProfileHMM(FixedHMM):
         for W in xrange(window_min, window_max + 1):
             logE = None
             best_seed = None
-            for b in np.linspace(0, 1, 5, endpoint=False)[1:]:
-                for d in np.linspace(0, 1, 5, endpoint=False)[1:]:
+            for b in np.linspace(0, 1, steps, endpoint=False)[1:]:
+                for d in np.linspace(0, 1, steps, endpoint=False)[1:]:
                     for s in xrange(n_seeds):
                         # pick a random subsequence
                         i = random.randint(0, len(X) - W - 1)
@@ -338,7 +340,7 @@ class ProfileHMM(FixedHMM):
                         t0[0] = b
                         t0[1] = d
                         t0[2:] /= t0[2:].sum()
-                        eps = 1.0 + 1e-6*f0[0,:]
+                        eps = 1.0 + 1e-3*f0[0,:]
                         p0 = np.repeat(1.0/(2*W), 2*W)
 
                         hmm = cls(f=f0, t=t0, p0=p0, eps=eps)
@@ -347,10 +349,11 @@ class ProfileHMM(FixedHMM):
                         if logE is None or hmm.logE > logE:
                             logE = hmm.logE
                             best_seed = hmm
-
+                    hmm.logger.info(
+                        'ProfileHMM.fit b = {0:.2e} d = {1:.2e} logE = {2:.2e}'.format(b, d, logE))
             G2 = util.model_score(n*logP0, logE, (W - W0)*(A - 1))
             hmm.logger.info(
-                'ProfileHMM.fit E1={0} G={1}'.format(logE, G2))
+                'ProfileHMM.fit W = {0} E1 = {1} G = {2}'.format(W, logE, G2))
 
             if G is None or G2 < G:
                 G = G2
@@ -369,7 +372,7 @@ def phmm_cmp(W, Z1, Z2):
     return ((Z1 >= W) != (Z2 >= W)).mean()
 
 
-if __name__ == '__main__':
+def demo1():
     phmm_true = ProfileHMM(
         f=np.array([
             [0.2, 0.3, 0.2, 0.3],
@@ -388,3 +391,21 @@ if __name__ == '__main__':
 
     z, logP = phmm.viterbi(X)
     print 'Error finding motifs (% mismatch):', phmm_cmp(phmm.W, Z, z)*100
+
+
+def demo2():
+    page = hp.url_to_page('https://news.ycombinator.com/')
+    tags = [
+        fragment.tag if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG
+        else '</' for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)
+    ]
+
+    cb = util.CodeBook(tags)
+    X = np.array([cb.code(tag) for tag in tags])
+    phmm = ProfileHMM.fit(X, 40, 45)
+    print phmm.f
+    print phmm.t
+
+
+if __name__ == '__main__':
+    demo2()
