@@ -1,5 +1,3 @@
-import random
-
 import numpy as np
 import scipy.optimize as opt
 import scrapely.htmlpage as hp
@@ -44,7 +42,7 @@ class FixedHMM(util.Logged):
         assert value.shape == (self.S,)
 
         self._pZ = value
-        self.logPZ = np.log(np.where(self._pZ>0, self._pZ, 1e-100))
+        self.logPZ = util.safe_log(self._pZ)
         self.dist_z = util.Categorical(self.pZ)
 
     @property
@@ -56,7 +54,7 @@ class FixedHMM(util.Logged):
         assert value.shape == (self.S, self.S)
 
         self._pT = value
-        self.logPT = np.log(np.where(self._pT>0, self._pT, 1e-100))
+        self.logPT = util.safe_log(self._pT)
         self.dist_t = [util.Categorical(p) for p in self._pT]
 
     @property
@@ -68,7 +66,7 @@ class FixedHMM(util.Logged):
         assert value.shape == (self.S, self.A)
 
         self._pE = value
-        self.logPE = np.log(np.where(self._pE>0, self._pE, 1e-100))
+        self.logPE = util.safe_log(self._pE)
         self.dist_e = [util.Categorical(p) for p in self._pE]
 
     def generate(self, n):
@@ -159,6 +157,14 @@ class FixedHMM(util.Logged):
             z[i - 1] = psi[z[i], i]
 
         return z, logP
+
+
+    def score(self, X, Z):
+        """Calculate log-probability of (X, Z)"""
+        logP = self.logPZ[Z[0]] + self.logPE[Z[0], X[0]]
+        for i in xrange(len(X)):
+            logP += self.logPT[Z[i-1], Z[i]] + self.logPE[Z[i], X[i]]
+        return logP
 
 
 class ProfileHMM(FixedHMM):
@@ -362,11 +368,13 @@ class ProfileHMM(FixedHMM):
             best_phmm_2 = None
             if guess_emissions is None:
                 emissions = []
+                priors = []
                 for i in util.random_pick(xrange(n - W - 1), t_seeds):
-                    emissions.append(
-                        util.guess_emissions(code_book, X[i:i + W]))
+                    f0 = util.guess_emissions(code_book, X[i:i + W])
+                    emissions.append(f0)
+                    priors.append(1.0 + 1e-3*f0[0, :])
             else:
-                emissions = guess_emissions(code_book, W, X, t_seeds)
+                emissions, priors = guess_emissions(code_book, W, X, t_seeds)
 
             for b_out in np.linspace(0, 1, steps + 1, endpoint=False)[1:]:
                 for d in np.linspace(0, 1, steps + 1, endpoint=False)[1:]:
@@ -377,7 +385,7 @@ class ProfileHMM(FixedHMM):
                         t0[1] = b_out
                         t0[2] = d
                         t0[3:] /= t0[2:].sum()
-                        eps = 1.0 + 1e-3*f0[0,:]
+                        eps = priors.pop()
                         p0 = np.repeat(1.0/(2*W), 2*W)
 
                         hmm = cls(f=f0, t=t0, p0=p0, eps=eps)
@@ -406,37 +414,34 @@ class ProfileHMM(FixedHMM):
         return best_phmm_1
 
 
-    def extract(self, X, prop1=0.5, prop2=0.25):
+    def extract(self, X, min_score=-0.7):
         if self.code_book is not None:
             X = np.array(map(self.code_book.code, X))
 
         Z, logP = self.viterbi(X)
         i_start = None
-        z_start = None
         i_end = None
         z_end = None
 
-        def valid_motif(cound):
-            return (count >= prop1*float(i_end - i_start) and
-                    count >= prop2*float(self.W))
+        def valid_motif():
+            return (self.score(X[i_start:i_end], Z[i_start:i_end])/
+                    float(i_end - i_start + 1)) >= min_score
 
         for i, z in enumerate(Z):
             if z >= self.W:
                 if i_start is None:
                     i_start = i
-                    z_start = z
                     count = 0
                 else:
                     if z <= z_end:
-                        if valid_motif(count):
+                        if valid_motif():
                             yield (i_start, i_end), Z[i_start:i_end]
                         i_start = i
-                        z_start = z
                         count = 0
                 i_end = i
                 z_end = z
                 count += 1
-        if i_start is not None and valid_motif(count):
+        if i_start is not None and valid_motif():
             yield (i_start, i_end), Z[i_start:i_end]
 
 
@@ -470,6 +475,7 @@ def html_guess_emissions(code_book, W, X, n=1):
     width W, guess the initial value of the emission matrix"""
     s = code_book.code('/>') # integer for the closing tag symbol
     emissions = []
+    priors = []
     # candidates start with a non-closing tag and end with a closing one
     candidates = [i for i in xrange(len(X) - W) if X[i] != s and X[i + W] == s]
     for i in util.random_pick(candidates, n):
@@ -478,24 +484,30 @@ def html_guess_emissions(code_book, W, X, n=1):
         f[W, :] = 0.0 # zero probability of ending motif with non-closing tag
         f[W, s] = 1.0 # probability 1 of ending motif with closing tag
         emissions.append(util.normalized(f))
-    return emissions
+        eps = f[0, :].repeat(W).reshape(f[1:,:].shape)
+        eps[  0, s] = 1e-6
+        eps[W-1, :] = 1e-6
+        eps[W-1, s] = 1.0
+        priors.append(1.0 + 1e-3*util.normalized(eps))
+    return emissions, priors
 
 
 def demo2():
-    page = hp.url_to_page('https://news.ycombinator.com/')
+    page = hp.url_to_page('https://news.ycombinator.com')
     tags_1 = [fragment for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)]
     tags_2 = [
         fragment.tag if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG
         else '/>' for fragment in tags_1
     ]
 
-    cb = util.CodeBook(tags_2)
     X = np.array(tags_2)
-    phmm = ProfileHMM.fit(X, 42, guess_emissions=html_guess_emissions)
+    phmm = ProfileHMM.fit(X, 10, 50, guess_emissions=html_guess_emissions)
     for (i, j), Z in phmm.extract(X):
         print 80*'#'
         print Z
         print 80*'-'
+        print 'SCORE: ', phmm.score(
+            np.array([phmm.code_book.code(x) for x in X[i:j]]), Z)
         print page.body[tags_1[i].start:tags_1[j].end]
     return phmm
 

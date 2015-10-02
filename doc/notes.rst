@@ -466,6 +466,21 @@ get:
    \beta_{i-1}(s_1) &= 
    \left[\sum_{s_2}\beta_i(s_2)P(Z_i=s_2|Z_{i-1}=s_1)\right]P(X_{i-1}|Z_{i-1}=s_1)
    
+
+We can take into account in this step any information the user has provided about the
+states. If we know that:
+
+.. math::
+   U_i = 0 &\implies \underset{s \in \pmb{S}^M}{\alpha (s)} = 0 \\
+   U_i = 1 &\implies \underset{s \in \pmb{S}^B}{\alpha (s)} = 0 
+
+And of course renormalize:
+
+.. math::
+   \alpha(s) = \frac{\alpha(s)}{\sum_s \alpha(s)}
+
+And also we do the same with :math:`\beta`.
+
 Re-estimation equations
 ~~~~~~~~~~~~~~~~~~~~~~~
 
