@@ -293,6 +293,7 @@ whether or not a hidden state is part of a motif:
 We can use this to aid in detecting motifs. For example, a user can manually 
 annotate where motifs are by specifying the value of :math:`U_i`.
 
+Parameter estimation
 --------------------
 
 Expectation-Maximization (EM)

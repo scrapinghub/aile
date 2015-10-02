@@ -1,5 +1,6 @@
 import collections
 import logging
+import random
 
 import numpy as np
 import scipy.optimize as opt
@@ -7,11 +8,13 @@ import scipy.stats as stats
 
 
 def eq_delta(a, b, eps=1e-3):
+    """True if |a - b| <= eps"""
     return np.all(np.logical_and(b - eps <= a, a <= b + eps))
 
 
-def safe_log(x, l=1e-100):
-    return np.log(np.where(x < l, l, x))
+def safe_log(x, eps=1e-100):
+    """Logarithm that returns a value even when evaluated at 0"""
+    return np.log(np.where(x < eps, eps, x))
 
 
 def normalized(P):
@@ -35,7 +38,14 @@ def log_range(start, stop, step, endpoint=True):
         yield x
 
 
+def random_pick(x, n=1):
+    """Pick a random element from x"""
+    return [x[random.randint(0, len(x) - 1)] for i in xrange(n)]
+
+
 def guess_emissions(code_book, X, gamma=0.1):
+    """Given a sequence X that has been encoded with code_book guess the
+    initial value of the emission matrix used in MEME and ProfileHMM"""
     A = len(code_book)
     W = len(X)
     def g(m):
@@ -55,10 +65,14 @@ def guess_emissions(code_book, X, gamma=0.1):
 
 
 def model_score(logP0, logP1, fp):
+    """Compare model 1 against model 0, where fp is the difference in free
+    parameters. Returns a value between 0 (model 1 is better) and
+    1 (model 0 is better)"""
     return stats.chi2.sf(2.0*(logP1 - logP0), fp)**(1.0/fp)
 
 
 class Logged(object):
+    """An object with a logger attribute"""
     def __init__(self, logger='default'):
         if logger is 'default':
             logging.basicConfig()
@@ -81,9 +95,9 @@ class Categorical(object):
         for i, x in enumerate(self.w):
             b = r <= x
             s[np.logical_and(
-                np.logical_not(a), 
+                np.logical_not(a),
                 b)] = i
-            a = b            
+            a = b
         return s
 
 

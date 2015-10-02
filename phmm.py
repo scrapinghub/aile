@@ -192,6 +192,8 @@ class ProfileHMM(FixedHMM):
         self.eps = eps if eps is not None else np.repeat(1.0, self.A)
         self.p0 = p0 if p0 is not None else np.repeat(1.0/self.S, self.S)
 
+        self.code_book = None
+
         # Initialize FixedHMM
         super(ProfileHMM, self).__init__(self.p0, self.calc_pE(f), self.calc_pT(t))
 
@@ -211,8 +213,8 @@ class ProfileHMM(FixedHMM):
         pT[0, self.W] = 1 - b_out
         for j in xrange(1, self.W):
             pT[j, j         ] = b_in     # b[j] -> b[j]
-            pT[j, self.W + j] = 1 - b_in # b[j] -> m[j]            
-        for j in xrange(self.W):            
+            pT[j, self.W + j] = 1 - b_in # b[j] -> m[j]
+        for j in xrange(self.W):
             pT[self.W + j, (j + 1) % self.W] = mb    # m[j] -> b[j + 1]
             for k in xrange(self.W):
                 pT[self.W + j, self.W + k] = F[(k - j - 2) % self.W]
@@ -313,8 +315,32 @@ class ProfileHMM(FixedHMM):
 
     @classmethod
     def fit(cls, sequence, window_min, window_max=None,
-            gamma=0.1, steps=4, n_seeds=1, precision=1e-5, max_iter=200):
+            gamma=0.1, steps=4, n_seeds=1, precision=1e-5,
+            max_iter=200, guess_emissions=None, logger='default'):
+        """Fit the model parameters using data.
+
+        - sequence       : the sequence to fit
+        - window_min     : minimum motif width to consider
+        - window_max     : maximum motif width to consider.
+                           If None only one motif width will be considered.
+        - gamma          : parameter to pass to the guess_emissions function
+        - steps          : number of steps in the grid (b_out,d)
+        - n_seeds        : number of seeds per grid element
+        - precision      : EM desired precision in logE
+        - max_iter       : maximum iterations in EM
+        - guess_emissions: a function to compute the initial value of the
+                           emissions matrix. Signature:
+
+                               guess_emissions(code_book, W, X)
+
+                           where:
+                                code_book: CodeBook used to encode X
+                                W        : motif width
+                                X        : encoded sequence
+        """
+        log = util.Logged(logger=logger)
         if window_max is None:
+            log.logger.info('ProfileHMM.fit: using only one motif width (W = {0})'.format(window_min))
             window_max = window_min
 
         n = len(sequence)
@@ -323,21 +349,30 @@ class ProfileHMM(FixedHMM):
         A = len(code_book)
         X = np.array(map(code_book.code, sequence))
 
-        W0 = 1
-        logP0 = np.sum(
-            code_book.frequencies*np.log(code_book.frequencies))
-        G = None
-        best_W = None
+        t_seeds = n_seeds*steps**2
 
+        W0 = 1           # motif width of the null model
+        logP0 = np.sum(  # average log E of null model
+            code_book.frequencies*np.log(code_book.frequencies))
+        G = None         # model score against null model
+
+        best_phmm_1 = None  # best overall model
         for W in xrange(window_min, window_max + 1):
             logE = None
-            best_seed = None
-            for b_out in np.linspace(0, 1, steps, endpoint=False)[1:]:
-                for d in np.linspace(0, 1, steps, endpoint=False)[1:]:
+            best_phmm_2 = None
+            if guess_emissions is None:
+                emissions = []
+                for i in util.random_pick(xrange(n - W - 1), t_seeds):
+                    emissions.append(
+                        util.guess_emissions(code_book, X[i:i + W]))
+            else:
+                emissions = guess_emissions(code_book, W, X, t_seeds)
+
+            for b_out in np.linspace(0, 1, steps + 1, endpoint=False)[1:]:
+                for d in np.linspace(0, 1, steps + 1, endpoint=False)[1:]:
                     for s in xrange(n_seeds):
                         # pick a random subsequence
-                        i = random.randint(0, len(X) - W - 1)
-                        f0 = util.guess_emissions(code_book, X[i:i + W])
+                        f0 = emissions.pop()
                         t0 = np.random.rand(6)
                         t0[1] = b_out
                         t0[2] = d
@@ -350,24 +385,59 @@ class ProfileHMM(FixedHMM):
 
                         if logE is None or hmm.logE > logE:
                             logE = hmm.logE
-                            best_seed = hmm
-                    hmm.logger.info(
+                            best_phmm_2 = hmm
+                    log.logger.info(
                         'ProfileHMM.fit b_out = {0:.2e} d = {1:.2e} logE = {2:.2e}'.format(b_out, d, logE))
             G2 = util.model_score(n*logP0, logE, (W - W0)*(A - 1))
-            hmm.logger.info(
+            log.logger.info(
                 'ProfileHMM.fit W = {0} E1 = {1} G = {2}'.format(W, logE, G2))
 
             if G is None or G2 < G:
                 G = G2
-                best_W = best_seed
+                best_phmm_1 = best_phmm_2
 
             if G == 0:
-                hmm.logger.info('Switched null model (W={0})'.format(W))
+                log.logger.info('Switched null model (W={0})'.format(W))
                 G = 1.0
                 logP0 = logE/n
                 W0 = float(W)
 
-        return best_W
+        best_phmm_1.code_book = code_book
+        return best_phmm_1
+
+
+    def extract(self, X, prop1=0.5, prop2=0.25):
+        if self.code_book is not None:
+            X = np.array(map(self.code_book.code, X))
+
+        Z, logP = self.viterbi(X)
+        i_start = None
+        z_start = None
+        i_end = None
+        z_end = None
+
+        def valid_motif(cound):
+            return (count >= prop1*float(i_end - i_start) and
+                    count >= prop2*float(self.W))
+
+        for i, z in enumerate(Z):
+            if z >= self.W:
+                if i_start is None:
+                    i_start = i
+                    z_start = z
+                    count = 0
+                else:
+                    if z <= z_end:
+                        if valid_motif(count):
+                            yield (i_start, i_end), Z[i_start:i_end]
+                        i_start = i
+                        z_start = z
+                        count = 0
+                i_end = i
+                z_end = z
+                count += 1
+        if i_start is not None and valid_motif(count):
+            yield (i_start, i_end), Z[i_start:i_end]
 
 
 def phmm_cmp(W, Z1, Z2):
@@ -385,7 +455,7 @@ def demo1():
             0.05, 0.9, 0.1, 0.05, 0.85, 0.1])
     )
 
-    X, Z = phmm_true.generate(1000)
+    X, Z = phmm_true.generate(5000)
     phmm = ProfileHMM.fit(X, 3)
 
     print "True model 't' parameters", phmm_true.t
@@ -395,19 +465,40 @@ def demo1():
     print 'Error finding motifs (% mismatch):', phmm_cmp(phmm.W, Z, z)*100
 
 
+def html_guess_emissions(code_book, W, X, n=1):
+    """Given a sequence X, the code_book used to encode it and the motif
+    width W, guess the initial value of the emission matrix"""
+    s = code_book.code('/>') # integer for the closing tag symbol
+    emissions = []
+    # candidates start with a non-closing tag and end with a closing one
+    candidates = [i for i in xrange(len(X) - W) if X[i] != s and X[i + W] == s]
+    for i in util.random_pick(candidates, n):
+        f = util.guess_emissions(code_book, X[i:i+W])
+        f[1, s] = 0.0 # zero probability of starting motif with closing tag
+        f[W, :] = 0.0 # zero probability of ending motif with non-closing tag
+        f[W, s] = 1.0 # probability 1 of ending motif with closing tag
+        emissions.append(util.normalized(f))
+    return emissions
+
+
 def demo2():
     page = hp.url_to_page('https://news.ycombinator.com/')
-    tags = [
+    tags_1 = [fragment for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)]
+    tags_2 = [
         fragment.tag if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG
-        else '</' for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)
+        else '/>' for fragment in tags_1
     ]
 
-    cb = util.CodeBook(tags)
-    X = np.array([cb.code(tag) for tag in tags])
-    phmm = ProfileHMM.fit(X, 40, 45)
-    print phmm.f
-    print phmm.t
+    cb = util.CodeBook(tags_2)
+    X = np.array(tags_2)
+    phmm = ProfileHMM.fit(X, 42, guess_emissions=html_guess_emissions)
+    for (i, j), Z in phmm.extract(X):
+        print 80*'#'
+        print Z
+        print 80*'-'
+        print page.body[tags_1[i].start:tags_1[j].end]
+    return phmm
 
 
 if __name__ == '__main__':
-    demo2()
+    phmm = demo2()
