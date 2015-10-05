@@ -1,10 +1,10 @@
 import numpy as np
-from cython import prange
 
 import util
 
 cimport numpy as np
 cimport cython
+
 
 class FixedHMM(util.Logged):
     def __init__(self,
