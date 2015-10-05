@@ -3,171 +3,10 @@ import scipy.optimize as opt
 import scrapely.htmlpage as hp
 
 import util
+import hmm
 
 
-class FixedHMM(util.Logged):
-    def __init__(self, pZ, pE, pT, logger='default'):
-        """Intialize a HMM with fixed parameters.
-
-        - pZ: prior on the first hidden state Z1
-              pZ[s] = Probability of being at state 's'
-
-        - pE: probability of emissions
-              pZ[s, a] = Probability of emitting symbol 'a' from state 's'
-
-        - pT: probability of transitions
-              pT[s1, s2] = Probability of going from state s1 to s2
-
-        We assume there are S hidden states and A different emission symbols.
-        The shapes of the arrays must be then:
-
-            pZ: (S,)
-            pE: (S, A)
-            pT: (S, S)
-        """
-        self.S, self.A = pE.shape
-
-        self.pZ = pZ
-        self.pE = pE
-        self.pT = pT
-
-        super(FixedHMM, self).__init__(logger)
-
-    @property
-    def pZ(self):
-        return self._pZ
-
-    @pZ.setter
-    def pZ(self, value):
-        assert value.shape == (self.S,)
-
-        self._pZ = value
-        self.logPZ = util.safe_log(self._pZ)
-        self.dist_z = util.Categorical(self.pZ)
-
-    @property
-    def pT(self):
-        return self._pT
-
-    @pT.setter
-    def pT(self, value):
-        assert value.shape == (self.S, self.S)
-
-        self._pT = value
-        self.logPT = util.safe_log(self._pT)
-        self.dist_t = [util.Categorical(p) for p in self._pT]
-
-    @property
-    def pE(self):
-        return self._pE
-
-    @pE.setter
-    def pE(self, value):
-        assert value.shape == (self.S, self.A)
-
-        self._pE = value
-        self.logPE = util.safe_log(self._pE)
-        self.dist_e = [util.Categorical(p) for p in self._pE]
-
-    def generate(self, n):
-        """Generate a random sequence of length n"""
-        X = np.zeros((n,), dtype=int)
-        Z = np.zeros((n,), dtype=int)
-
-        Z[0] = self.dist_z.sample()
-        X[0] = self.dist_e[Z[0]].sample()
-        for i in xrange(1, n):
-            Z[i] = self.dist_t[Z[i-1]].sample()
-            X[i] = self.dist_e[Z[i  ]].sample()
-        return X, Z
-
-
-    def forward_backward(self, X):
-        """Run the forward-backwards algorithm using data X.
-
-        Compute the following magnitudes using the current parameters:
-
-            - P(X[:i+1]          , Z[i]=j         )      alpha [j,    i]
-            - P(X[i:  ]                   | Z[i]=j)      beta  [j,    i]
-            - P(         Z[i-1]=j, Z[i]=k | X     )      xi    [j, k, i]
-            - P(         Z[i  ]=j         | X     )      gamma [j,    i]
-
-            - sum E   [log P(X,Z)]                       logE
-                  Z|X
-        """
-
-        n = len(X)
-
-        self.scale = np.zeros((n, ))
-
-        # alpha[j, i] = P(X[:i+1], Z[i]=j)
-        self.alpha = np.zeros((self.S, n))
-        self.alpha[:, 0] = self.pE[:, X[0]] * self.pZ
-        self.scale[0] = 1.0/self.alpha[:, 0].sum()
-        self.alpha[:, 0] *= self.scale[0]
-        for i in xrange(1, n):
-            self.alpha[:, i] = self.pT.T.dot(self.alpha[:, i - 1])*self.pE[:,X[i]]
-            self.scale[i] = 1.0/(self.alpha[:, i].sum())
-            self.alpha[:, i] *= self.scale[i]
-
-        # beta[j, i] = P(X[i:] | Z[i]=j)
-        self.beta = np.zeros((self.S, n))
-        self.beta[:, n-1] = self.pE[:, X[n-1]]*self.scale[n-1]
-        for i in xrange(n - 1, 0, -1):
-            self.beta[:, i - 1] = self.scale[i - 1]*self.pT.dot(self.beta[:, i])*self.pE[:, X[i - 1]]
-
-        # xi[j, k, i] = P(Z[i-1]=j, Z[i]=k | X)
-        self.xi = np.zeros((self.S, self.S, n))
-        for i in xrange(1, n):
-            self.xi[:, :, i] = (
-                self.alpha[:, i - 1].reshape((self.S,1)) *
-                self.beta[:, i]) * self.pT
-            self.xi[:, :, i] /= self.xi[:, :, i].sum()
-
-        # gamma[j, i] = P(Z[i]=j | X)
-        self.gamma = self.xi.sum(axis=0)
-        self.gamma[:, 0] = self.xi[:, :, 1].sum(axis=1)
-
-        #  sum E   [log P(X,Z)]
-        #       Z|X
-        self.logE = self.gamma[:, 0].dot(self.logPE[:, X[0]])
-        for i in xrange(1, n):
-            self.logE += self.gamma[:,i].dot(self.logPE[:,X[i]])
-            self.logE += np.sum(self.xi[:, :, i]*self.logPT)
-
-
-    def viterbi(self, X):
-        n = len(X)
-
-        delta = np.zeros((self.S, n))
-        psi = np.zeros((self.S, n), dtype=int)
-
-        # log P(Z1, X1)
-        delta[:, 0] = self.logPZ + self.logPE[:, X[0]]
-        for i in xrange(1, n):
-            m = self.logPT.T + delta[:, i - 1]
-            psi[: ,i] = np.argmax(m, axis=1)
-            # log P(Z1, .., Zi=j, X1, ..., Xi)
-            delta[:, i] = m[np.arange(self.S), psi[:, i]] + self.logPE[:, X[i]]
-
-        z = np.zeros((n,), dtype=int)
-        z[n - 1] = np.argmax(delta[:, n - 1])
-        logP = delta[z[n - 1], n - 1]
-        for i in xrange(n - 1, 0, -1):
-            z[i - 1] = psi[z[i], i]
-
-        return z, logP
-
-
-    def score(self, X, Z):
-        """Calculate log-probability of (X, Z)"""
-        logP = self.logPZ[Z[0]] + self.logPE[Z[0], X[0]]
-        for i in xrange(len(X)):
-            logP += self.logPT[Z[i-1], Z[i]] + self.logPE[Z[i], X[i]]
-        return logP
-
-
-class ProfileHMM(FixedHMM):
+class ProfileHMM(hmm.FixedHMM):
     def __init__(self, f, t, eps=None, p0=None):
         """Initialize a Profile HMM with.
 
@@ -200,16 +39,14 @@ class ProfileHMM(FixedHMM):
 
         self.code_book = None
 
-        # Initialize FixedHMM
+        # Initialize hmm.FixedHMM
         super(ProfileHMM, self).__init__(self.p0, self.calc_pE(f), self.calc_pT(t))
-
 
     def calc_pE(self, f):
         pE = np.zeros((self.S, self.A))
         pE[:self.W, :] = self.f[ 0, :] # copy W times the background emissions
         pE[self.W:, :] = self.f[1:, :] # copy as is the motif probabilities
         return pE
-
 
     def calc_pT(self, t):
         b_in, b_out, d, mb, m, md = t
@@ -226,7 +63,6 @@ class ProfileHMM(FixedHMM):
                 pT[self.W + j, self.W + k] = F[(k - j - 2) % self.W]
             pT[self.W + j, self.W + (j + 1) % self.W] += m
         return pT
-
 
     @property
     def t(self):
@@ -412,7 +248,6 @@ class ProfileHMM(FixedHMM):
 
         best_phmm_1.code_book = code_book
         return best_phmm_1
-
 
     def extract(self, X, min_score=-0.7):
         if self.code_book is not None:
