@@ -125,18 +125,11 @@ class CodeBook(object):
         return len(self.letters)
 
     def code(self, letter):
-        """Convert letter to integer.
-
-        Note: if letter is not in the code book then insert None
-        inside the output sequence.
-        """
-        return self._index.get(letter, None)
+        """Convert letter to integer"""
+        return self._index.get(letter, len(self.letters))
 
     def decode(self, index):
-        """Perform the inverse operation of code.
-
-        Note: as in coding, if some symbol can't be found then insert None.
-        """
+        """Perform the inverse operation of code"""
         N = len(self.letters)
         if index >= 0 and index < N:
             return self.letters[index]

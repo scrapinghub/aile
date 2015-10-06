@@ -51,3 +51,7 @@ def test_hmm():
     gamma2 /= gamma2.sum()
 
     assert util.eq_delta(gamma1, gamma2, 1e-2)
+
+
+if __name__ == '__main__':
+    test_hmm()

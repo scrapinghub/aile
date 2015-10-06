@@ -1,9 +1,12 @@
+import math
 import numpy as np
 import scipy.optimize as opt
-import scrapely.htmlpage as hp
 
 import util
 import hmm
+
+cimport numpy as np
+cimport cython
 
 
 class ProfileHMM(hmm.FixedHMM):
@@ -52,16 +55,16 @@ class ProfileHMM(hmm.FixedHMM):
         b_in, b_out, d, mb, m, md = t
         pT = np.zeros((self.S, self.S))
         F = md*(d**np.arange(self.W))*(1-d)/(1 - d**self.W)
+        F[self.W - 1] += m
         pT[0,      0] = b_out
         pT[0, self.W] = 1 - b_out
-        for j in xrange(1, self.W):
+        for j in range(1, self.W):
             pT[j, j         ] = b_in     # b[j] -> b[j]
             pT[j, self.W + j] = 1 - b_in # b[j] -> m[j]
-        for j in xrange(self.W):
+        for j in range(self.W):
             pT[self.W + j, (j + 1) % self.W] = mb    # m[j] -> b[j + 1]
-            for k in xrange(self.W):
+            for k in range(self.W):
                 pT[self.W + j, self.W + k] = F[(k - j - 2) % self.W]
-            pT[self.W + j, self.W + (j + 1) % self.W] += m
         return pT
 
     @property
@@ -82,78 +85,96 @@ class ProfileHMM(hmm.FixedHMM):
         self._f = value
         self.pE = self.calc_pE(value)
 
-    def fit_em(self, sequence, precision=1e-5, max_iter=100):
-        X = sequence
-        n = len(sequence)
+        
+    def fit_em_1(self, np.ndarray[np.int_t, ndim=1] sequence):
+        self.forward_backward(sequence)
+#        self.logE += np.sum((self.eps - 1)*self.f[1:,:])
 
-        it = 0
+        cdef unsigned int W = self.W
+        cdef np.ndarray[np.double_t, ndim=2] gamma = self.gamma
+        cdef np.ndarray[np.double_t, ndim=3] xi = self.xi
+
+        cdef np.ndarray[np.int_t, ndim=1] X = sequence
+        cdef unsigned int n = len(X)
+
+        cdef unsigned int i, j, k, l                    
+    
+        cdef np.ndarray[np.double_t, ndim=2] f = np.zeros(self.f.shape)
+
+        for i in range(n):
+            for s in range(W):
+                f[    0, X[i]] += gamma[    s, i]
+                f[1 + s, X[i]] += gamma[W + s, i]
+
+        f[0,  :] /= f[0, :].sum()
+        f[1:, :] = util.normalized(f[1:, :])
+
+        # count state transitions
+        cdef np.ndarray[np.double_t, ndim=2] c = xi.sum(axis=2)
+
+        cdef double b1 = 0.0
+        cdef double b2 = 0.0
+        for j in range(1, W):
+            b1 += c[j,     j] # stay at background
+            b2 += c[j, W + j] # switch from background to motif
+        cdef double b_in = b1/(b1 + b2)
+        cdef double b_out = c[0, 0]/(c[0,0] + c[0, W])
+        
+        cdef np.ndarray[np.double_t, ndim=2] pT = self.pT
+
+        # objective function for parameters
+        def g(np.ndarray[np.double_t, ndim=1] tM, 
+              np.ndarray[np.double_t, ndim=2] c):
+            cdef double d  = tM[0]
+            cdef double mb = tM[1]
+            cdef double m  = tM[2]
+            cdef double md = tM[3]
+        
+            F = math.log(md) + np.log(d)*np.arange(self.W) + math.log(1-d) - math.log(1 - d**self.W)
+            F[self.W - 1] = np.logaddexp(F[self.W - 1], math.log(m))
+            r = 0
+            for j in range(W):
+                for k in range(W):
+                    r -= c[W + j, W + k]*F[(k - j - 2) % W]
+
+            return r
+
+        print g(self.t[2:], c/n)
+        d, mb, m, md = opt.fmin_slsqp(
+            func        = g,
+            x0          = self.t[2:].copy(),
+            bounds      = 4*[(1e-3, 1.0 - 1e-3)],
+            eqcons      = [lambda tM, c: tM[1:].sum() - 1.0],
+            iprint      = 1,
+            args        = (c/n, ),
+            epsilon     = 1e-6,
+            acc         = 1e-9
+        )
+
+        self.f = f
+#        self.t = np.array([b_in, b_out, self.t[2], self.t[3], self.t[4], self.t[5]])
+        self.t = np.array([b_in, b_out, d, mb, m, md])
+
+    def fit_em(self, 
+               np.ndarray[np.int_t, ndim=1] sequence, 
+               double precision=1e-3, 
+               unsigned int max_iter=100):        
         logE = None
+        it = 0
         while True:
-            self.forward_backward(sequence)
-            self.logE += np.sum((self.eps - 1)*self.f[1:,:])
-
-            f = np.zeros(self.f.shape)
-            fB = f[ 0, :]
-            fM = f[1:, :]
-            for i in xrange(n):
-                fB[   X[i]] += self.gamma[:self.W, i].sum()
-                fM[:, X[i]] += self.gamma[self.W:, i]
-
-            fB /= fB.sum()
-            fM[:] = util.normalized(fM + self.eps - 1)
-
-            # count state transitions
-            c = self.xi.sum(axis=2)
-
-            b1 = 0.0
-            b2 = 0.0
-            for j in xrange(1, self.W):
-                b1 += c[j,          j] # stay at background
-                b2 += c[j, self.W + j] # switch from background to motif
-            b_in = b1/(b1 + b2)
-            b_out = c[0, 0]/(c[0,0] + c[0, self.W])
-
-            k0 = 0.0
-            k1 = np.zeros((self.W,))
-            for j in xrange(self.W):
-                k0 += c[self.W + j, (j + 1) % self.W]
-            for l in xrange(self.W):
-                for j in xrange(self.W):
-                    k1[l] += c[self.W + j, self.W + (j + l + 2) % self.W]
-
-            # objective function for parameters
-            def g(tM):
-                d, mb, m, md = tM
-                s = md*(d**np.arange(self.W))*(1 - d)/(1 - d**self.W)
-                s[self.W - 1] += m
-                r = -k0*util.safe_log(mb) - k1.dot(util.safe_log(s))
-                return r
-
-            prange = (1e-6, 1.0 - 1e-6)
-            res = opt.fmin_slsqp(
-                func        = g,
-                x0          = self.t[2:],
-                bounds      = 4*[prange],
-                eqcons      = [lambda x: x[1:].sum() - 1.0],
-                iprint      = 0
-            )
-            d, mb, m, md = res
-
+            self.fit_em_1(sequence)
             # Check convergence
             if logE:
                 err = np.abs(self.logE - logE)/np.abs(logE)
                 if err < precision:
                     break
-
+                print logE, err
             logE = self.logE
             it += 1
             if it > max_iter:
                 self.logger.warning(
                     'ProfileHMM.fit_em: max iterations reached without convergence (err={0})'.format(err))
                 break
-
-            self.f = f
-            self.t = np.array([b_in, b_out, d, mb, m, md])
 
     @classmethod
     def fit(cls, sequence, window_min, window_max=None,
@@ -199,13 +220,13 @@ class ProfileHMM(hmm.FixedHMM):
         G = None         # model score against null model
 
         best_phmm_1 = None  # best overall model
-        for W in xrange(window_min, window_max + 1):
+        for W in range(window_min, window_max + 1):
             logE = None
             best_phmm_2 = None
             if guess_emissions is None:
                 emissions = []
                 priors = []
-                for i in util.random_pick(xrange(n - W - 1), t_seeds):
+                for i in util.random_pick(range(n - W - 1), t_seeds):
                     f0 = util.guess_emissions(code_book, X[i:i + W])
                     emissions.append(f0)
                     priors.append(1.0 + 1e-3*f0[0, :])
@@ -214,7 +235,7 @@ class ProfileHMM(hmm.FixedHMM):
 
             for b_out in np.linspace(0, 1, steps + 1, endpoint=False)[1:]:
                 for d in np.linspace(0, 1, steps + 1, endpoint=False)[1:]:
-                    for s in xrange(n_seeds):
+                    for s in range(n_seeds):
                         # pick a random subsequence
                         f0 = emissions.pop()
                         t0 = np.random.rand(6)
@@ -280,72 +301,3 @@ class ProfileHMM(hmm.FixedHMM):
             yield (i_start, i_end), Z[i_start:i_end]
 
 
-def phmm_cmp(W, Z1, Z2):
-    return ((Z1 >= W) != (Z2 >= W)).mean()
-
-
-def demo1():
-    phmm_true = ProfileHMM(
-        f=np.array([
-            [0.2, 0.3, 0.2, 0.3],
-            [0.9, 0.1, 0.0, 0.0],
-            [0.2, 0.8, 0.0, 0.0],
-            [0.0, 0.0, 0.8, 0.2]]),
-        t = np.array([
-            0.05, 0.9, 0.1, 0.05, 0.85, 0.1])
-    )
-
-    X, Z = phmm_true.generate(5000)
-    phmm = ProfileHMM.fit(X, 3)
-
-    print "True model 't' parameters", phmm_true.t
-    print " Estimated 't' paramaters", phmm.t
-
-    z, logP = phmm.viterbi(X)
-    print 'Error finding motifs (% mismatch):', phmm_cmp(phmm.W, Z, z)*100
-
-
-def html_guess_emissions(code_book, W, X, n=1):
-    """Given a sequence X, the code_book used to encode it and the motif
-    width W, guess the initial value of the emission matrix"""
-    s = code_book.code('/>') # integer for the closing tag symbol
-    emissions = []
-    priors = []
-    # candidates start with a non-closing tag and end with a closing one
-    candidates = [i for i in xrange(len(X) - W) if X[i] != s and X[i + W] == s]
-    for i in util.random_pick(candidates, n):
-        f = util.guess_emissions(code_book, X[i:i+W])
-        f[1, s] = 0.0 # zero probability of starting motif with closing tag
-        f[W, :] = 0.0 # zero probability of ending motif with non-closing tag
-        f[W, s] = 1.0 # probability 1 of ending motif with closing tag
-        emissions.append(util.normalized(f))
-        eps = f[0, :].repeat(W).reshape(f[1:,:].shape)
-        eps[  0, s] = 1e-6
-        eps[W-1, :] = 1e-6
-        eps[W-1, s] = 1.0
-        priors.append(1.0 + 1e-3*util.normalized(eps))
-    return emissions, priors
-
-
-def demo2():
-    page = hp.url_to_page('https://news.ycombinator.com')
-    tags_1 = [fragment for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)]
-    tags_2 = [
-        fragment.tag if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG
-        else '/>' for fragment in tags_1
-    ]
-
-    X = np.array(tags_2)
-    phmm = ProfileHMM.fit(X, 10, 50, guess_emissions=html_guess_emissions)
-    for (i, j), Z in phmm.extract(X):
-        print 80*'#'
-        print Z
-        print 80*'-'
-        print 'SCORE: ', phmm.score(
-            np.array([phmm.code_book.code(x) for x in X[i:j]]), Z)
-        print page.body[tags_1[i].start:tags_1[j].end]
-    return phmm
-
-
-if __name__ == '__main__':
-    phmm = demo2()
