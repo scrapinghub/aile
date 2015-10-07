@@ -86,6 +86,7 @@ class ProfileHMM(hmm.FixedHMM):
         self.pE = self.calc_pE(value)
 
     def fit_em_1(self, np.ndarray[np.int_t, ndim=1] sequence):
+        """Run a single iteration of the EM method"""
         self.forward_backward(sequence)
         # Take into account the priors on the parameters
         self.logP += np.sum((self.eps - 1)*util.safe_log(self.f[1:,:]))
@@ -100,12 +101,10 @@ class ProfileHMM(hmm.FixedHMM):
         cdef unsigned int i, j, k, l
 
         cdef np.ndarray[np.double_t, ndim=2] f = np.zeros(self.f.shape)
-
         for i in range(n):
             for s in range(W):
                 f[    0, X[i]] += gamma[    s, i]
                 f[1 + s, X[i]] += gamma[W + s, i]
-
         f[0,  :] /= f[0, :].sum()
         f[1:, :] = util.normalized(f[1:, :] + self.eps - 1.0)
 
@@ -131,7 +130,7 @@ class ProfileHMM(hmm.FixedHMM):
             cdef double m  = tM[2]
             cdef double md = tM[3]
 
-            # numerical derivation can make these magnitudes get zero
+            # numerical derivation can make these magnitudes get near zero
             if d  <= 1e-100: d  = 1e-100
             if mb <= 1e-100: mb = 1e-100
             if m  <= 1e-100: m  = 1e-100
@@ -178,6 +177,14 @@ class ProfileHMM(hmm.FixedHMM):
         self.f = f
         self.t = np.array([b_in, b_out, d, mb, m, md])
 
+    def fit_em_n(self, sequence, n=1):
+        """Iterate the EM algorithm 'n' times"""
+        logP = []
+        for i in range(n):
+            self.fit_em_1(sequence)
+            logP.append(self.logP)
+        return logP
+
     def fit_em(self,
                np.ndarray[np.int_t, ndim=1] sequence,
                double precision=1e-3,
@@ -193,7 +200,8 @@ class ProfileHMM(hmm.FixedHMM):
                     # should never happen
                     self.logger.warning(
                         'ProfileHMM.fit_em: log(P) decreased {0}({1:3f}%)'.format(logP, err*100.0))
-                if np.abs(err) < precision:
+                    break
+                if err < precision:
                     break
             logP = self.logP
             it += 1
@@ -272,13 +280,17 @@ class ProfileHMM(hmm.FixedHMM):
                         p0 = np.repeat(1.0/(2*W), 2*W)
 
                         hmm = cls(f=f0, t=t0, p0=p0, eps=eps)
-                        hmm.fit_em(X, precision, max_iter)
+                        hmm.fit_em_n(X, 3)
 
                         if logP is None or hmm.logP > logP:
                             logP = hmm.logP
                             best_phmm_2 = hmm
                     log.logger.info(
                         'ProfileHMM.fit b_out = {0:.2e} d = {1:.2e} logP = {2:.2e}'.format(b_out, d, logP))
+
+            best_phmm_2.fit_em(X, precision=precision, max_iter=max_iter)
+            logP = best_phmm_2.logP
+
             G2 = util.model_score(n*logP0, logP, (W - W0)*(A - 1))
             log.logger.info(
                 'ProfileHMM.fit W = {0} logP = {1} G = {2}'.format(W, logP, G2))
@@ -296,7 +308,7 @@ class ProfileHMM(hmm.FixedHMM):
         best_phmm_1.code_book = code_book
         return best_phmm_1
 
-    def extract(self, X, min_score=-0.7):
+    def extract(self, X, min_score=-2.0):
         if self.code_book is not None:
             X = np.array(map(self.code_book.code, X))
 
@@ -317,11 +329,11 @@ class ProfileHMM(hmm.FixedHMM):
                 else:
                     if z <= z_end:
                         if valid_motif():
-                            yield (i_start, i_end), Z[i_start:i_end]
+                            yield (i_start, i_end+1), Z[i_start:i_end+1]
                         i_start = i
                         count = 0
                 i_end = i
                 z_end = z
                 count += 1
         if i_start is not None and valid_motif():
-            yield (i_start, i_end), Z[i_start:i_end]
+            yield (i_start, i_end+1), Z[i_start:i_end+1]
