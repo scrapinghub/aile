@@ -13,7 +13,10 @@ We are trying to auto-detect repeating patterns in the tags, not necessarily mad
 The problem of detecting repeating patterns in streams is known as *motif discovery* and most of the literature about it seems
 to be published in the field of genetics.
 
-Right now there is an initial and slow implementation of the [MEME](http://meme-suite.org/) algorithm, as described in the
+Right now there are two algorithms: MEME and Profile HMM
+
+## MEME
+An initial and slow implementation of the [MEME](http://meme-suite.org/) algorithm, as described in the
 following papers:
 
 - Unsupervised learning of multiple motifs in biopolymers using
@@ -30,7 +33,7 @@ following papers:
 The algorithm is run without almost any particular information about HTML, just that candidate subsequences should have a 
 balanced set of open/closing tags. In the future we could try to give more a priori probability to patterns starting with or containing list or table HTML tags.
 
-## Running it
+### Running it
     pip install -r requirements.txt
     python meme.py
     
@@ -61,3 +64,7 @@ It will download and automatically extract the repating patterns of [Hacker News
       <a href="user?id=vezzy-fnord">vezzy-fnord</a> <a href="item?id=10247910">7 hours
       ago</a> | <a href="item?id=10247910">6 comments</a></td>
     </tr>
+
+## Profile HMM
+The main limitation of MEME is that detected sequences must have fixed length, that is, if one element of the motif is deleted or if noise is introduced between two motif elements it will fail to match.
+This method is still work in progress and is being documented [here](http://aile.readthedocs.org/en/latest/notes.html)
