@@ -85,10 +85,10 @@ class ProfileHMM(hmm.FixedHMM):
         self._f = value
         self.pE = self.calc_pE(value)
 
-        
     def fit_em_1(self, np.ndarray[np.int_t, ndim=1] sequence):
         self.forward_backward(sequence)
-#        self.logE += np.sum((self.eps - 1)*self.f[1:,:])
+        # Take into account the priors on the parameters
+        self.logE += np.sum((self.eps - 1)*self.f[1:,:])
 
         cdef unsigned int W = self.W
         cdef np.ndarray[np.double_t, ndim=2] gamma = self.gamma
@@ -97,8 +97,8 @@ class ProfileHMM(hmm.FixedHMM):
         cdef np.ndarray[np.int_t, ndim=1] X = sequence
         cdef unsigned int n = len(X)
 
-        cdef unsigned int i, j, k, l                    
-    
+        cdef unsigned int i, j, k, l
+
         cdef np.ndarray[np.double_t, ndim=2] f = np.zeros(self.f.shape)
 
         for i in range(n):
@@ -107,10 +107,11 @@ class ProfileHMM(hmm.FixedHMM):
                 f[1 + s, X[i]] += gamma[W + s, i]
 
         f[0,  :] /= f[0, :].sum()
-        f[1:, :] = util.normalized(f[1:, :])
+        f[1:, :] = util.normalized(f[1:, :] + self.eps - 1.0)
 
         # count state transitions
         cdef np.ndarray[np.double_t, ndim=2] c = xi.sum(axis=2)
+        c /= c.sum()
 
         cdef double b1 = 0.0
         cdef double b2 = 0.0
@@ -119,56 +120,57 @@ class ProfileHMM(hmm.FixedHMM):
             b2 += c[j, W + j] # switch from background to motif
         cdef double b_in = b1/(b1 + b2)
         cdef double b_out = c[0, 0]/(c[0,0] + c[0, W])
-        
+
         cdef np.ndarray[np.double_t, ndim=2] pT = self.pT
 
         # objective function for parameters
-        def g(np.ndarray[np.double_t, ndim=1] tM, 
+        def g(np.ndarray[np.double_t, ndim=1] tM,
               np.ndarray[np.double_t, ndim=2] c):
             cdef double d  = tM[0]
             cdef double mb = tM[1]
             cdef double m  = tM[2]
             cdef double md = tM[3]
-        
+
             F = math.log(md) + np.log(d)*np.arange(self.W) + math.log(1-d) - math.log(1 - d**self.W)
             F[self.W - 1] = np.logaddexp(F[self.W - 1], math.log(m))
             r = 0
             for j in range(W):
+                r -= c[W + j, (j + 1) % W]*math.log(mb)
                 for k in range(W):
                     r -= c[W + j, W + k]*F[(k - j - 2) % W]
 
             return r
 
-        print g(self.t[2:], c/n)
         d, mb, m, md = opt.fmin_slsqp(
             func        = g,
             x0          = self.t[2:].copy(),
             bounds      = 4*[(1e-3, 1.0 - 1e-3)],
             eqcons      = [lambda tM, c: tM[1:].sum() - 1.0],
-            iprint      = 1,
+            iprint      = 0,
             args        = (c/n, ),
             epsilon     = 1e-6,
             acc         = 1e-9
         )
 
         self.f = f
-#        self.t = np.array([b_in, b_out, self.t[2], self.t[3], self.t[4], self.t[5]])
         self.t = np.array([b_in, b_out, d, mb, m, md])
 
-    def fit_em(self, 
-               np.ndarray[np.int_t, ndim=1] sequence, 
-               double precision=1e-3, 
-               unsigned int max_iter=100):        
+    def fit_em(self,
+               np.ndarray[np.int_t, ndim=1] sequence,
+               double precision=1e-3,
+               unsigned int max_iter=100):
         logE = None
         it = 0
         while True:
             self.fit_em_1(sequence)
             # Check convergence
             if logE:
-                err = np.abs(self.logE - logE)/np.abs(logE)
-                if err < precision:
+                err = (logE - self.logE)/logE
+                if err < 0:
+                    self.logger.warning(
+                        'ProfileHMM.fit_em: log(E) decreased {0}({1:3f}%)'.format(logE, err*100.0))
+                if np.abs(err) < precision:
                     break
-                print logE, err
             logE = self.logE
             it += 1
             if it > max_iter:
@@ -299,5 +301,3 @@ class ProfileHMM(hmm.FixedHMM):
                 count += 1
         if i_start is not None and valid_motif():
             yield (i_start, i_end), Z[i_start:i_end]
-
-
