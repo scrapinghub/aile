@@ -232,9 +232,8 @@ class FixedHMM(util.Logged):
         cdef np.ndarray[np.double_t, ndim=2] logPE = self.logPE
 
         cdef unsigned int n = len(X)
-
-        cdef double logP = logPZ[Z[0]] + logPE[Z[0], X[0]]
         cdef unsigned int i
-        for i in range(n):
+        cdef double logP = logPZ[Z[0]] + logPE[Z[0], X[0]]
+        for i in range(1, n):
             logP += logPT[Z[i-1], Z[i]] + logPE[Z[i], X[i]]
         return logP
