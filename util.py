@@ -12,6 +12,10 @@ def eq_delta(a, b, eps=1e-3):
     return np.all(np.logical_and(b - eps <= a, a <= b + eps))
 
 
+def eq_relative(a, b, eps=1e-3):
+    return np.all(np.abs((a - b)/b) <= eps)
+
+
 def safe_log(x, eps=1e-100):
     """Logarithm that returns a value even when evaluated at 0"""
     return np.log(np.where(x < eps, eps, x))

@@ -100,6 +100,9 @@ def test_hmm_2():
     assert min(np.max(np.abs(np.ma.masked_invalid(np.log(H.gamma.T[:, p]) - DP)))
                for p in itertools.permutations(range(3))) < 1e-6
 
+    assert util.eq_relative(H.logP, G.log_probability(X))
+
+
 if __name__ == '__main__':
     test_hmm_1()
     test_hmm_2()

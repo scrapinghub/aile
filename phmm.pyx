@@ -88,7 +88,7 @@ class ProfileHMM(hmm.FixedHMM):
     def fit_em_1(self, np.ndarray[np.int_t, ndim=1] sequence):
         self.forward_backward(sequence)
         # Take into account the priors on the parameters
-        self.logE += np.sum((self.eps - 1)*self.f[1:,:])
+        self.logP += np.sum((self.eps - 1)*util.safe_log(self.f[1:,:]))
 
         cdef unsigned int W = self.W
         cdef np.ndarray[np.double_t, ndim=2] gamma = self.gamma
@@ -159,19 +159,20 @@ class ProfileHMM(hmm.FixedHMM):
                np.ndarray[np.int_t, ndim=1] sequence,
                double precision=1e-3,
                unsigned int max_iter=100):
-        logE = None
+        logP = None
         it = 0
         while True:
             self.fit_em_1(sequence)
             # Check convergence
-            if logE:
-                err = (logE - self.logE)/logE
+            if logP:
+                err = (logP - self.logP)/logP
                 if err < 0:
+                    # should never happen
                     self.logger.warning(
-                        'ProfileHMM.fit_em: log(E) decreased {0}({1:3f}%)'.format(logE, err*100.0))
+                        'ProfileHMM.fit_em: log(P) decreased {0}({1:3f}%)'.format(logP, err*100.0))
                 if np.abs(err) < precision:
                     break
-            logE = self.logE
+            logP = self.logP
             it += 1
             if it > max_iter:
                 self.logger.warning(
@@ -191,7 +192,7 @@ class ProfileHMM(hmm.FixedHMM):
         - gamma          : parameter to pass to the guess_emissions function
         - steps          : number of steps in the grid (b_out,d)
         - n_seeds        : number of seeds per grid element
-        - precision      : EM desired precision in logE
+        - precision      : EM desired precision in logP
         - max_iter       : maximum iterations in EM
         - guess_emissions: a function to compute the initial value of the
                            emissions matrix. Signature:
@@ -223,7 +224,7 @@ class ProfileHMM(hmm.FixedHMM):
 
         best_phmm_1 = None  # best overall model
         for W in range(window_min, window_max + 1):
-            logE = None
+            logP = None
             best_phmm_2 = None
             if guess_emissions is None:
                 emissions = []
@@ -250,14 +251,14 @@ class ProfileHMM(hmm.FixedHMM):
                         hmm = cls(f=f0, t=t0, p0=p0, eps=eps)
                         hmm.fit_em(X, precision, max_iter)
 
-                        if logE is None or hmm.logE > logE:
-                            logE = hmm.logE
+                        if logP is None or hmm.logP > logP:
+                            logP = hmm.logP
                             best_phmm_2 = hmm
                     log.logger.info(
-                        'ProfileHMM.fit b_out = {0:.2e} d = {1:.2e} logE = {2:.2e}'.format(b_out, d, logE))
-            G2 = util.model_score(n*logP0, logE, (W - W0)*(A - 1))
+                        'ProfileHMM.fit b_out = {0:.2e} d = {1:.2e} logP = {2:.2e}'.format(b_out, d, logP))
+            G2 = util.model_score(n*logP0, logP, (W - W0)*(A - 1))
             log.logger.info(
-                'ProfileHMM.fit W = {0} E1 = {1} G = {2}'.format(W, logE, G2))
+                'ProfileHMM.fit W = {0} E1 = {1} G = {2}'.format(W, logP, G2))
 
             if G is None or G2 < G:
                 G = G2
@@ -266,7 +267,7 @@ class ProfileHMM(hmm.FixedHMM):
             if G == 0:
                 log.logger.info('Switched null model (W={0})'.format(W))
                 G = 1.0
-                logP0 = logE/n
+                logP0 = logP/n
                 W0 = float(W)
 
         best_phmm_1.code_book = code_book

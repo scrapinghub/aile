@@ -170,23 +170,13 @@ class FixedHMM(util.Logged):
         cdef np.ndarray[np.double_t, ndim=2] gamma = xi.sum(axis=0)
         gamma[:, 0] = xi[:, :, 1].sum(axis=1)
 
-        #  sum E   [log P(X,Z)]
-        #       Z|X
-        cdef double logE = 0
-        for s in range(S):
-            logE += gamma[s, 0]*logPE[s, X[0]]
-        for i in range(1, n):
-            for s in range(S):
-                logE += gamma[s, i]*logPE[s, X[i]]
-                for t in range(S):
-                    logE += xi[s, t, i]*logPT[s, t]
-
+        # log P(X)
         self.scale = scale
         self.alpha = alpha
         self.beta = beta
         self.xi = xi
         self.gamma = gamma
-        self.logE = logE
+        self.logP = -np.log(scale).sum()
 
     @cython.boundscheck(False)
     def viterbi(self, np.ndarray[np.int_t, ndim=1] X):
