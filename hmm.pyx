@@ -12,7 +12,7 @@ class FixedHMM(util.Logged):
                  np.ndarray[np.double_t, ndim=2] pE,
                  np.ndarray[np.double_t, ndim=2] pT,
                  logger='default'):
-        """Intialize a HMM with fixed parameters.
+        """Initialize a HMM with fixed parameters.
 
         - pZ: prior on the first hidden state Z1
               pZ[s] = Probability of being at state 's'
