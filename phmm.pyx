@@ -124,28 +124,51 @@ class ProfileHMM(hmm.FixedHMM):
         cdef np.ndarray[np.double_t, ndim=2] pT = self.pT
 
         # objective function for parameters
-        def g(np.ndarray[np.double_t, ndim=1] tM,
-              np.ndarray[np.double_t, ndim=2] c):
+        def EM2(np.ndarray[np.double_t, ndim=1] tM,
+                np.ndarray[np.double_t, ndim=2] c):
             cdef double d  = tM[0]
             cdef double mb = tM[1]
             cdef double m  = tM[2]
             cdef double md = tM[3]
 
-            F = math.log(md) + np.log(d)*np.arange(self.W) + math.log(1-d) - math.log(1 - d**self.W)
-            F[self.W - 1] = np.logaddexp(F[self.W - 1], math.log(m))
+            # numerical derivation can make these magnitudes get zero
+            if d  <= 1e-100: d  = 1e-100
+            if mb <= 1e-100: mb = 1e-100
+            if m  <= 1e-100: m  = 1e-100
+            if md <= 1e-100: md = 1e-100
+
+            cdef unsigned int W = c.shape[0]/2
+
+            cdef np.ndarray[np.double_t, ndim=1] F = (
+                np.log(d)*np.arange(W) +
+                np.log(md) +
+                np.log(1 - d) -
+                np.log(1 - d**W)
+            )
+            F[W - 1] = np.logaddexp(F[W - 1], np.log(m))
+
             r = 0
             for j in range(W):
-                r -= c[W + j, (j + 1) % W]*math.log(mb)
+                r -= c[W + j, (j + 1) % W]*np.log(mb)
                 for k in range(W):
                     r -= c[W + j, W + k]*F[(k - j - 2) % W]
 
             return r
 
+        # Equality constraint for tM parameters
+        def gm(np.ndarray[np.double_t, ndim=1] tM,
+               np.ndarray[np.double_t, ndim=2] c):
+            cdef double mb = tM[1]
+            cdef double m  = tM[2]
+            cdef double md = tM[3]
+
+            return (mb + m + md) - 1.0
+
         d, mb, m, md = opt.fmin_slsqp(
-            func        = g,
+            func        = EM2,
             x0          = self.t[2:].copy(),
             bounds      = 4*[(1e-3, 1.0 - 1e-3)],
-            eqcons      = [lambda tM, c: tM[1:].sum() - 1.0],
+            eqcons      = [gm],
             iprint      = 0,
             args        = (c/n, ),
             epsilon     = 1e-6,
@@ -258,7 +281,7 @@ class ProfileHMM(hmm.FixedHMM):
                         'ProfileHMM.fit b_out = {0:.2e} d = {1:.2e} logP = {2:.2e}'.format(b_out, d, logP))
             G2 = util.model_score(n*logP0, logP, (W - W0)*(A - 1))
             log.logger.info(
-                'ProfileHMM.fit W = {0} E1 = {1} G = {2}'.format(W, logP, G2))
+                'ProfileHMM.fit W = {0} logP = {1} G = {2}'.format(W, logP, G2))
 
             if G is None or G2 < G:
                 G = G2
