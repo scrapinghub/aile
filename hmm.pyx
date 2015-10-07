@@ -225,7 +225,7 @@ class FixedHMM(util.Logged):
 
         return z, logP
 
-    def score(self, np.ndarray[np.int, ndim=1] X, np.ndarray[np.int, ndim=1] Z):
+    def score(self, np.ndarray[np.int_t, ndim=1] X, np.ndarray[np.int_t, ndim=1] Z):
         """Calculate log-probability of (X, Z)"""
         cdef np.ndarray[np.double_t, ndim=1] logPZ = self.logPZ
         cdef np.ndarray[np.double_t, ndim=2] logPT = self.logPT
