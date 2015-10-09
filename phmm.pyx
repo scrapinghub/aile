@@ -320,12 +320,13 @@ class ProfileHMM(hmm.FixedHMM):
         i_start = None
         i_end = None
         z_end = None
+        count = None
 
         def valid_motif():
             if min_score is None:
                 return True
             return (self.score(X[i_start:i_end], Z[i_start:i_end])/
-                    float(i_end - i_start + 1)) >= min_score
+                    float(count) >= min_score and count >= 0.3*self.W)
 
         for i, z in enumerate(Z):
             if z >= self.W:
@@ -335,11 +336,11 @@ class ProfileHMM(hmm.FixedHMM):
                 else:
                     if z <= z_end:
                         if valid_motif():
-                            yield (i_start, i_end+1), Z[i_start:i_end+1]
+                            yield (i_start, i_end), Z[i_start:i_end+1]
                         i_start = i
                         count = 0
                 i_end = i
                 z_end = z
                 count += 1
         if i_start is not None and valid_motif():
-            yield (i_start, i_end+1), Z[i_start:i_end+1]
+            yield (i_start, i_end), Z[i_start:i_end+1]
