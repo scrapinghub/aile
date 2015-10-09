@@ -6,12 +6,31 @@ cimport numpy as np
 cimport cython
 
 
-class FixedHMM(util.Logged):
+cdef class FBResult:
+    cdef public double logP
+
+    cdef public np.ndarray scale
+    cdef public np.ndarray alpha
+    cdef public np.ndarray beta
+    cdef public np.ndarray xi
+    cdef public np.ndarray gamma
+
+
+cdef class FixedHMM:
+    cdef readonly unsigned int S
+    cdef readonly unsigned int A
+
+    cdef readonly np.ndarray pZ
+    cdef readonly np.ndarray pE
+    cdef readonly np.ndarray pT
+    cdef readonly np.ndarray logPZ
+    cdef readonly np.ndarray logPE
+    cdef readonly np.ndarray logPT
+
     def __init__(self,
                  np.ndarray[np.double_t, ndim=1] pZ,
                  np.ndarray[np.double_t, ndim=2] pE,
-                 np.ndarray[np.double_t, ndim=2] pT,
-                 logger='default'):
+                 np.ndarray[np.double_t, ndim=2] pT):
         """Initialize a HMM with fixed parameters.
 
         - pZ: prior on the first hidden state Z1
@@ -33,58 +52,44 @@ class FixedHMM(util.Logged):
         self.S = pE.shape[0]
         self.A = pE.shape[1]
 
-        self.pZ = pZ
-        self.pE = pE
-        self.pT = pT
+        self.set_pZ(pZ)
+        self.set_pE(pE)
+        self.set_pT(pT)
 
-        super(FixedHMM, self).__init__(logger)
 
-    @property
-    def pZ(self):
-        return self._pZ
+    def set_pZ(self, value):
+        self.pZ = value
+        self.logPZ = util.safe_log(self.pZ)
 
-    @pZ.setter
-    def pZ(self, np.ndarray value):
-        self._pZ = value
-        self.logPZ = util.safe_log(self._pZ)
-        self.dist_z = util.Categorical(self.pZ)
 
-    @property
-    def pT(self):
-        return self._pT
+    def set_pT(self, value):
+        self.pT = value
+        self.logPT = util.safe_log(self.pT)
 
-    @pT.setter
-    def pT(self, value):
-        self._pT = value
-        self.logPT = util.safe_log(self._pT)
-        self.dist_t = [util.Categorical(p) for p in self._pT]
-
-    @property
-    def pE(self):
-        return self._pE
-
-    @pE.setter
-    def pE(self, value):
-        self._pE = value
-        self.logPE = util.safe_log(self._pE)
-        self.dist_e = [util.Categorical(p) for p in self._pE]
+    def set_pE(self, value):
+        self.pE = value
+        self.logPE = util.safe_log(self.pE)
 
     def generate(self, int n):
         """Generate a random sequence of length n"""
+        dist_z = util.Categorical(self.pZ)
+        dist_t = [util.Categorical(p) for p in self.pT]
+        dist_e = [util.Categorical(p) for p in self.pE]
+
         cdef np.ndarray[np.int_t, ndim=1] X = np.zeros((n,), dtype=int)
         cdef np.ndarray[np.int_t, ndim=1] Z = np.zeros((n,), dtype=int)
 
         cdef int i
 
-        Z[0] = self.dist_z.sample()
-        X[0] = self.dist_e[Z[0]].sample()
+        Z[0] = dist_z.sample()
+        X[0] = dist_e[Z[0]].sample()
         for i in range(1, n):
-            Z[i] = self.dist_t[Z[i-1]].sample()
-            X[i] = self.dist_e[Z[i  ]].sample()
+            Z[i] = dist_t[Z[i-1]].sample()
+            X[i] = dist_e[Z[i  ]].sample()
         return X, Z
 
     @cython.boundscheck(False)
-    def forward_backward(self, np.ndarray[np.int_t, ndim=1] X):
+    cpdef forward_backward(self, np.ndarray[np.int_t, ndim=1] X):
         """Run the forward-backwards algorithm using data X.
 
         Compute the following magnitudes using the current parameters:
@@ -170,16 +175,19 @@ class FixedHMM(util.Logged):
         cdef np.ndarray[np.double_t, ndim=2] gamma = xi.sum(axis=0)
         gamma[:, 0] = xi[:, :, 1].sum(axis=1)
 
+        res = FBResult()
         # log P(X)
-        self.scale = scale
-        self.alpha = alpha
-        self.beta = beta
-        self.xi = xi
-        self.gamma = gamma
-        self.logP = -np.log(scale).sum()
+        res.scale = scale
+        res.alpha = alpha
+        res.beta = beta
+        res.xi = xi
+        res.gamma = gamma
+        res.logP = -np.log(scale).sum()
+
+        return res
 
     @cython.boundscheck(False)
-    def viterbi(self, np.ndarray[np.int_t, ndim=1] X):
+    cpdef viterbi(self, np.ndarray[np.int_t, ndim=1] X):
         cdef unsigned int S = self.S
 
         cdef np.ndarray[np.double_t, ndim=1] logPZ = self.logPZ
@@ -225,7 +233,7 @@ class FixedHMM(util.Logged):
 
         return z, logP
 
-    def score(self, np.ndarray[np.int_t, ndim=1] X, np.ndarray[np.int_t, ndim=1] Z):
+    cpdef score(self, np.ndarray[np.int_t, ndim=1] X, np.ndarray[np.int_t, ndim=1] Z):
         """Calculate log-probability of (X, Z)"""
         cdef np.ndarray[np.double_t, ndim=1] logPZ = self.logPZ
         cdef np.ndarray[np.double_t, ndim=2] logPT = self.logPT

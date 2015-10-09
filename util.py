@@ -75,6 +75,20 @@ def model_score(logP0, logP1, fp):
     return stats.chi2.sf(2.0*(logP1 - logP0), fp)**(1.0/fp)
 
 
+def model_select(models):
+    (model0, logP0, n0), models = models[0], models[1:]
+    scores = [model_score(logP0, logP, n - n0) for model, logP, n in models]
+    best_score = min(scores)
+    if best_score == 1.0:
+        return model0
+    best = [model
+            for score, model in filter(
+                    lambda x: x[0] <= best_score, zip(scores, models))]
+    if len(best) > 1:
+        return model_select(best)
+    return best[0][0]
+
+
 class Logged(object):
     """An object with a logger attribute"""
     def __init__(self, logger='default'):

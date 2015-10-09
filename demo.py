@@ -52,7 +52,7 @@ def html_guess_emissions(code_book, W, X, n=1):
 
 
 def demo2():
-    page = hp.url_to_page('http://news.ycombinator.com')
+    page = hp.url_to_page('https://patchofland.com/investments.html')
     tags_1 = [fragment for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)]
     tags_2 = [
         fragment.tag if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG
@@ -60,8 +60,8 @@ def demo2():
     ]
 
     X = np.array(tags_2)
-    phmm = ProfileHMM.fit(X, 10, 50, guess_emissions=html_guess_emissions)
-    for (i, j), Z in phmm.extract(X):
+    phmm = ProfileHMM.fit(X, 20, 80, guess_emissions=html_guess_emissions)
+    for (i, j), Z in phmm.extract(X, min_score=None):
         print 80*'#'
         print Z
         print 80*'-'
