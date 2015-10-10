@@ -52,22 +52,33 @@ def html_guess_emissions(code_book, W, X, n=1):
 
 
 def demo2():
-    page = hp.url_to_page('https://patchofland.com/investments.html')
-    tags_1 = [fragment for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)]
-    tags_2 = [
-        fragment.tag if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG
-        else '/>' for fragment in tags_1
+    def tagify(page):
+        print "Processing", page.url
+        return [
+            fragment.tag if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG else '/>'
+            for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)
+        ]
+    train = [
+        tag
+        for i in range(1, 10)
+        for tag in tagify(hp.url_to_page(
+                'https://patchofland.com/investments/page/{0}.html'.format(i)))
     ]
+    X_train = np.array(train)
 
-    X = np.array(tags_2)
-    phmm = ProfileHMM.fit(X, 20, 80, guess_emissions=html_guess_emissions)
-    for (i, j), Z in phmm.extract(X, min_score=None):
+    phmm = ProfileHMM.fit(X_train, 75, 80, guess_emissions=html_guess_emissions)
+
+    page = hp.url_to_page(
+            'https://patchofland.com/investments/page/10.html')
+    test = tagify(page)
+    X_test = np.array(test)
+    for (i, j), Z in phmm.extract(X_test, min_score=-50):
         print 80*'#'
         print Z
         print 80*'-'
         print 'SCORE: ', phmm.score(
-            np.array([phmm.code_book.code(x) for x in X[i:j]]), Z)
-        print page.body[tags_1[i].start:tags_1[j].end]
+            np.array([phmm.code_book.code(x) for x in X_test[i:j]]), Z)
+        print page.body[test[i].start:test[j].end]
     return phmm
 
 
