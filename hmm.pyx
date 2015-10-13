@@ -103,6 +103,7 @@ cdef class FixedHMM:
                   Z|X
         """
         cdef unsigned int S = self.S
+        cdef unsigned int A = self.A
 
         cdef np.ndarray[np.double_t, ndim=1] pZ = self.pZ
         cdef np.ndarray[np.double_t, ndim=2] pE = self.pE
@@ -160,28 +161,35 @@ cdef class FixedHMM:
                 beta[s, i - 1] = b*a*pE[s, X[i - 1]]
 
         # xi[j, k, i] = P(Z[i-1]=j, Z[i]=k | X)
-        cdef np.ndarray[np.double_t, ndim=3] xi = np.zeros((S, S, n))
+        cdef np.ndarray[np.double_t, ndim=2] xi_i = np.zeros((S, S))
+        cdef np.ndarray[np.double_t, ndim=2] xi_c = np.zeros((S, S))
+        cdef np.ndarray[np.double_t, ndim=2] gm_c = np.zeros((S, A))
         for i in range(1, n):
             a = 0
             for s in range(S):
                 for t in range(S):
-                    xi[s, t, i] = b = alpha[s, i - 1]*beta[t, i]*pT[s, t]
+                    xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pT[s, t]
                     a += b
             for s in range(S):
                 for t in range(S):
-                    xi[s, t, i] /= a
-
-        # gamma[j, i] = P(Z[i]=j | X)
-        cdef np.ndarray[np.double_t, ndim=2] gamma = xi.sum(axis=0)
-        gamma[:, 0] = xi[:, :, 1].sum(axis=1)
+                    xi_i[s, t] /= a
+            if i==1:
+                for s in range(S):
+                    for t in range(S):
+                        gm_c[s, X[0]] += xi_i[s, t]
+            else:
+                for s in range(S):
+                    for t in range(S):
+                        xi_c[s, t   ] += xi_i[s, t]
+                        gm_c[s, X[i]] += xi_i[t, s]
 
         res = FBResult()
         # log P(X)
         res.scale = scale
         res.alpha = alpha
         res.beta = beta
-        res.xi = xi
-        res.gamma = gamma
+        res.xi = xi_c
+        res.gamma = gm_c
         res.logP = -np.log(scale).sum()
 
         return res

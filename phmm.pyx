@@ -36,17 +36,16 @@ class ProfileHMM(hmm.FixedHMM):
                           mb + m + md = 1
         """
         self.W = f.shape[0] - 1 # motif length
+        self.p0 = p0 if p0 is not None else np.repeat(1.0/(2*self.W), 2*self.W)
+        # Initialize hmm.FixedHMM
+        super(ProfileHMM, self).__init__(self.p0, self.calc_pE(f), self.calc_pT(t))
 
         self._f = f
         self._t = t
 
         self.eps = eps if eps is not None else np.repeat(1.0, self.A)
-        self.p0 = p0 if p0 is not None else np.repeat(1.0/self.S, self.S)
 
         self.code_book = None
-
-        # Initialize hmm.FixedHMM
-        super(ProfileHMM, self).__init__(self.p0, self.calc_pE(f), self.calc_pT(t))
 
     def calc_pE(self, f):
         pE = np.zeros((2*self.W, f.shape[1]))
@@ -95,39 +94,37 @@ class ProfileHMM(hmm.FixedHMM):
         fb.logP += np.sum((self.eps - 1)*util.safe_log(self.f[1:,:]))
 
         cdef unsigned int W = self.W
+        cdef unsigned int A = self.A
         cdef np.ndarray[np.double_t, ndim=2] gamma = fb.gamma
-        cdef np.ndarray[np.double_t, ndim=3] xi = fb.xi
+        cdef np.ndarray[np.double_t, ndim=2] xi = fb.xi
 
         cdef np.ndarray[np.int_t, ndim=1] X = sequence
         cdef unsigned int n = len(X)
 
-        cdef unsigned int i, j, k, l
+        cdef unsigned int a, i, j, k, l
 
         cdef np.ndarray[np.double_t, ndim=2] f = np.zeros(self.f.shape)
-        for i in range(n):
+        for a in range(A):
             for s in range(W):
-                f[    0, X[i]] += gamma[    s, i]
-                f[1 + s, X[i]] += gamma[W + s, i]
+                f[    0, a] += gamma[    s, a]
+                f[1 + s, a] += gamma[W + s, a]
         f[0,  :] /= f[0, :].sum()
         f[1:, :] = util.normalized(f[1:, :] + self.eps - 1.0)
 
         # count state transitions
-        cdef np.ndarray[np.double_t, ndim=2] c = xi.sum(axis=2)
-        c /= c.sum()
-
         cdef double b1 = 0.0
         cdef double b2 = 0.0
         for j in range(1, W):
-            b1 += c[j,     j] # stay at background
-            b2 += c[j, W + j] # switch from background to motif
+            b1 += xi[j,     j] # stay at background
+            b2 += xi[j, W + j] # switch from background to motif
         cdef double b_in = b1/(b1 + b2)
-        cdef double b_out = c[0, 0]/(c[0,0] + c[0, W])
+        cdef double b_out = xi[0, 0]/(xi[0,0] + xi[0, W])
 
         cdef np.ndarray[np.double_t, ndim=2] pT = self.pT
 
         # objective function for parameters
         def EM2(np.ndarray[np.double_t, ndim=1] tM,
-                np.ndarray[np.double_t, ndim=2] c):
+                np.ndarray[np.double_t, ndim=2] xi):
             cdef double d  = tM[0]
             cdef double mb = tM[1]
             cdef double m  = tM[2]
@@ -139,7 +136,7 @@ class ProfileHMM(hmm.FixedHMM):
             if m  <= 1e-100: m  = 1e-100
             if md <= 1e-100: md = 1e-100
 
-            cdef unsigned int W = c.shape[0]/2
+            cdef unsigned int W = xi.shape[0]/2
 
             cdef np.ndarray[np.double_t, ndim=1] F = (
                 np.log(d)*np.arange(W) +
@@ -151,15 +148,15 @@ class ProfileHMM(hmm.FixedHMM):
 
             r = 0
             for j in range(W):
-                r -= c[W + j, (j + 1) % W]*np.log(mb)
+                r -= xi[W + j, (j + 1) % W]*np.log(mb)
                 for k in range(W):
-                    r -= c[W + j, W + k]*F[(k - j - 2) % W]
+                    r -= xi[W + j, W + k]*F[(k - j - 2) % W]
 
             return r
 
         # Equality constraint for tM parameters
         def gm(np.ndarray[np.double_t, ndim=1] tM,
-               np.ndarray[np.double_t, ndim=2] c):
+               np.ndarray[np.double_t, ndim=2] xi):
             cdef double mb = tM[1]
             cdef double m  = tM[2]
             cdef double md = tM[3]
@@ -172,7 +169,7 @@ class ProfileHMM(hmm.FixedHMM):
             bounds      = 4*[(1e-3, 1.0 - 1e-3)],
             eqcons      = [gm],
             iprint      = 0,
-            args        = (c/n, ),
+            args        = (xi/n, ),
             epsilon     = 1e-6,
             acc         = 1e-9
         )
@@ -180,6 +177,7 @@ class ProfileHMM(hmm.FixedHMM):
         self.f = f
         self.t = np.array([b_in, b_out, d, mb, m, md])
 
+        print '    ', fb.logP, self.W
         return fb.logP
 
     def fit_em_n(self, sequence, n=1):
@@ -201,8 +199,8 @@ class ProfileHMM(hmm.FixedHMM):
                 err = (logP0 - logP1)/logP0
                 if err < 0:
                     # should never happen
-                    self.logger.warning(
-                        'ProfileHMM.fit_em: log(P) decreased {0}({1:3f}%)'.format(logP0, err*100.0))
+                    # self.logger.warning(
+                    #     'ProfileHMM.fit_em: log(P) decreased {0}({1:3f}%)'.format(logP0, err*100.0))
                     break
                 if err < precision:
                     break
@@ -211,6 +209,10 @@ class ProfileHMM(hmm.FixedHMM):
             if it > max_iter:
                 # TODO
                 break
+        # print self.logger.info(
+        #    'ProfileHMM.fit_em: logP = {0}, W = {1}, t = {2:.2e}, {3:.2e}, {4:.2e}, {5:.2e}, {6:.2e} {7:.2e}'.format(
+        #        logP0, self.W, self.t[0], self.t[1], self.t[2], self.t[3], self.t[4], self.t[5]
+        #    ))
         return logP1
 
     @staticmethod
