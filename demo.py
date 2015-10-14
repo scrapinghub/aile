@@ -51,34 +51,140 @@ def html_guess_emissions(code_book, W, X, n=1):
     return emissions, priors
 
 
+def tagify(page):
+    print "Processing", page.url
+    def convert(fragment):
+        if (fragment.is_text_content and
+            page.body[fragment.start:fragment.end].strip()):
+            yield ('[T]', fragment)
+        elif isinstance(fragment, hp.HtmlTag):
+            if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG:
+                tag_class = fragment.attributes.get('class', None)
+                if tag_class:
+                    yield (fragment.tag, fragment)
+                    yield (tag_class, None)
+                else:
+                    yield (fragment.tag, fragment)
+            else:
+                yield ('/>', fragment)
+        else:
+            yield (None, None)
+
+    return filter(lambda x: x[0] is not None,
+                  [x for f in page.parsed_body for x in convert(f)])
+
+def match_tags(tags):
+    match = np.repeat(-1, len(tags))
+    stack = []
+    for i, tag in enumerate(tags):
+        if isinstance(tag, hp.HtmlTag):
+            if tag.tag_type == hp.HtmlTagType.OPEN_TAG:
+                stack.append((i, tag))
+            elif (tag.tag_type == hp.HtmlTagType.CLOSE_TAG and
+                  stack):
+                last_i, last_tag = stack[-1]
+                if (last_tag.tag_type == hp.HtmlTagType.OPEN_TAG and
+                    last_tag.tag == tag.tag):
+                    match[last_i] = i
+                    stack.pop()
+    return match
+
+
+def extract(phmm, tags, fragments, m=0.2, G=0.2):
+    X = np.array(map(phmm.code_book.code, tags))
+    Z, logP = phmm.viterbi(X)
+
+    match = match_tags(fragments)
+    i = 0
+    while i < len(match):
+        j = match[i]
+        if j > 0:
+            k = j
+            while k - i <= phmm.W*(1.0 + m):
+                if k - i >= phmm.W*(1.0 - m):
+                    H = np.sum(
+                            np.abs(np.bincount(Z[i:k])[phmm.W:] - 1)
+                        )/float(phmm.W)
+                    if H <= G:
+                        score = phmm.score(X[i:k], Z[i:k])/(k - i)
+                        yield (i, k), Z[i:k], score, H
+                        i = k
+                        break
+                k = match[k + 1]
+                if k < j:
+                    break
+        i += 1
+
+
+def adjust(phmm, matches):
+    r = np.zeros((phmm.W, ), dtype=int)
+    for (i, j), Z, score, H in matches:
+        for k, z in enumerate(Z):
+            if z >= phmm.W:
+                r[z - phmm.W] += 1
+                break
+    start = np.argmax(r)
+    phmm2 = ProfileHMM(
+        f   = np.vstack((
+                phmm.f[ 0, :],
+                np.roll(phmm.f[1:phmm.W + 1 , :], -start, axis=0),
+                np.roll(phmm.f[  phmm.W + 1:, :], -start, axis=0))),
+        t   = phmm.t,
+        eps = phmm.eps,
+        p0  = phmm.p0)
+    phmm2.code_book = phmm.code_book
+    return phmm2
+
+
+def itemize(phmm, min_prob=0.01):
+    anc = phmm.code_book.code('a')
+    txt = phmm.code_book.code('[T]')
+    img = phmm.code_book.code('img')
+    return [phmm.W + j for j, g in enumerate(phmm.f[1:])
+            if (g[anc] >= min_prob or g[txt] >= min_prob or g[img] >= min_prob)]
+
+
 def demo2():
-    def tagify(page):
-        print "Processing", page.url
-        fragments = [fragment for fragment in page.parsed_body
-                     if isinstance(fragment, hp.HtmlTag)]
-        return zip([fragment.tag if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG else '/>'
-                    for fragment in fragments], fragments)
     tags_1, fragments_1 = zip(*[
         (tag, fragment)
         for i in range(1, 10)
         for tag, fragment in tagify(hp.url_to_page(
                 'https://patchofland.com/investments/page/{0}.html'.format(i)))
     ])
+
     X_train = np.array(tags_1)
 
-    phmm = ProfileHMM.fit(X_train, 77, guess_emissions=html_guess_emissions)
+    phmm = ProfileHMM.fit(X_train, 60, 70, guess_emissions=html_guess_emissions)
+    phmm = adjust(phmm, extract(phmm, tags_1, fragments_1))
+    fields = itemize(phmm)
 
     page = hp.url_to_page(
-            'https://patchofland.com/investments/page/10.html')
+        'https://patchofland.com/investments/page/10.html')
     tags_2, fragments_2 = zip(*tagify(page))
-    X_test = np.array(tags_2)
-    for (i, j), Z in phmm.extract(X_test, min_score=-50):
+
+    for (i, j), Z, score, H in extract(phmm, tags_2, fragments_2):
         print 80*'#'
-        print Z
-        print 80*'-'
-        print 'SCORE: ', phmm.score(
-            np.array([phmm.code_book.code(x) for x in X_test[i:j]]), Z)
-        print page.body[fragments_2[i].start:fragments_2[j].end]
+        f = {}
+        for k, z in enumerate(Z):
+            if z in fields:
+                fragment = fragments_2[i + k]
+                if fragment is not None:
+                    if fragment.is_text_content:
+                        f[z] = page.body[fragment.start:fragment.end]
+                    elif (isinstance(fragment, hp.HtmlTag) and
+                          fragment.tag_type != hp.HtmlTagType.CLOSE_TAG):
+                        if fragment.tag == 'a':
+                            f[z] = fragment.attributes.get('href', None)
+                            if f[z] is None:
+                                print fragment, page.body[fragment.start:fragment.end]
+                        if fragment.tag == 'img':
+                            f[z] = fragment.attributes.get('src', None)
+        for l, field in enumerate(fields):
+            s = f.get(field, None)
+            if s is not None:
+                s = s.encode('ascii', 'ignore')
+            print '{0: 2d} -> {1}'.format(l, s)
+
     return phmm
 
 

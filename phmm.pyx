@@ -177,7 +177,6 @@ class ProfileHMM(hmm.FixedHMM):
         self.f = f
         self.t = np.array([b_in, b_out, d, mb, m, md])
 
-        print '    ', fb.logP, self.W
         return fb.logP
 
     def fit_em_n(self, sequence, n=1):
@@ -298,8 +297,8 @@ class ProfileHMM(hmm.FixedHMM):
         logP0 = len(sequence)*np.sum(
             code_book.frequencies*np.log(code_book.frequencies))
         models = [(None, logP0, A - 1)]
-        for (phmm, logP), W in zip(best, rW):
-            models.append((phmm, logP, W*(A - 1)))
+        for phmm, logP in best:
+            models.append((phmm, logP, (phmm.W + 1)*(A - 1)))
         best_phmm = util.model_select(models)
 
         #-----------------------------------------------------------------------
