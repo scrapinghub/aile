@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.spatial.distance as dst
 import scrapely.htmlpage as hp
 
 from phmm import ProfileHMM
@@ -52,7 +53,6 @@ def html_guess_emissions(code_book, W, X, n=1):
 
 
 def tagify(page):
-    print "Processing", page.url
     def convert(fragment):
         if (fragment.is_text_content and
             page.body[fragment.start:fragment.end].strip()):
@@ -69,7 +69,6 @@ def tagify(page):
                 yield ('/>', fragment)
         else:
             yield (None, None)
-
     return filter(lambda x: x[0] is not None,
                   [x for f in page.parsed_body for x in convert(f)])
 
@@ -93,7 +92,6 @@ def match_tags(tags):
 def extract(phmm, tags, fragments, m=0.2, G=0.2):
     X = np.array(map(phmm.code_book.code, tags))
     Z, logP = phmm.viterbi(X)
-
     match = match_tags(fragments)
     i = 0
     while i < len(match):
@@ -142,32 +140,41 @@ def itemize(phmm, min_prob=0.01, tags=['[T]', 'a', 'img']):
             if np.any(g[a] >= min_prob)]
 
 
-def demo2():
-    P = 3
+def guess_motif_width(X, min_width=10, max_width=400):
+    D = np.array([dst.hamming(X[:-w], X[w:])
+                  for w in np.arange(min_width, max_width)])
+    return min_width + np.argmin(D)
+
+
+N_TRAIN = 3
+TRAIN_URLS_1 = [
+    'https://news.ycombinator.com/news?p={0}'.format(i)
+    for i in range(N_TRAIN)
+]
+TEST_URL_1 = 'https://news.ycombinator.com/news?p={0}'.format(N_TRAIN + 1)
+TRAIN_URLS_2 = [
+    'https://patchofland.com/investments/page/{0}.html'.format(i)
+    for i in range(N_TRAIN)
+]
+TEST_URL_2 = 'https://patchofland.com/investments/page/{0}.html'.format(N_TRAIN + 1)
+
+def demo2(train_urls, test_url):
+    print 'Downloading and parsing test urls... ',
     tags_1, fragments_1 = zip(*[
         (tag, fragment)
-        for i in range(1, P+1)
-        for tag, fragment in tagify(hp.url_to_page(
-                'https://patchofland.com/investments/page/{0}.html'.format(i)))
+        for url in train_urls
+        for tag, fragment in tagify(hp.url_to_page(url))
     ])
-    #tags_1, fragments_1 = zip(*[
-    #    (tag, fragment)
-    #    for i in range(1, P+1)
-    #    for tag, fragment in tagify(hp.url_to_page(
-    #            'https://news.ycombinator.com/news?p={0}'.format(i)))
-    #])
-
+    print 'done'
     X_train = np.array(tags_1)
-
-    phmm = ProfileHMM.fit(X_train, 60, 70, guess_emissions=html_guess_emissions)
+    W = guess_motif_width(X_train)
+    print 'Motif width guess:', W
+    phmm = ProfileHMM.fit(X_train, W - 2, W + 2, guess_emissions=html_guess_emissions)
+    print 'Motif width      :', phmm.W
     phmm = adjust(phmm, extract(phmm, tags_1, fragments_1))
     fields = itemize(phmm)
 
-    page = hp.url_to_page(
-        'https://patchofland.com/investments/page/{0}.html'.format(P+1))
-    #page = hp.url_to_page(
-    #    'https://news.ycombinator.com/news?p={0}'.format(P+1))
-
+    page = hp.url_to_page(test_url)
     tags_2, fragments_2 = zip(*tagify(page))
 
     for (i, j), Z, score, H in extract(phmm, tags_2, fragments_2):
@@ -197,4 +204,4 @@ def demo2():
 
 
 if __name__ == '__main__':
-    phmm = demo2()
+    phmm = demo2(TRAIN_URLS_1, TEST_URL_1)
