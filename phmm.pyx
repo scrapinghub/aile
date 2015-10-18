@@ -41,24 +41,23 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
     cdef unsigned int n = len(X) # sequence length
     cdef unsigned int i          # index from 0 to n - 1
     cdef double a, b             # accumulators
-    cdef int s, t, u, v # index from 0 to S - 1
+    cdef int s, t, u, v          # index from 0 to S - 1
 
-#    cdef np.ndarray[np.double_t, ndim=2] pS = np.zeros((S, S))
-#    for u in range(W):
-#        for v in range(W):
-#            pS[    u,     v] = pT[    u,     v]
-#            pS[    u, W + v] = pT[    u, W + v]
-#            pS[W + u,     v] = pT[W + u,     v]
-#        for v in range(w):
-#            t = W + (u + v + 1) % W
-#            pS[W + u,  t] = pT[W + u, t]
-#    for s in range(S):
-#        a = 0
-#        for t in range(S):
-#            a += pS[s, t]
-#        for t in range(S):
-#            pS[s, t] /= a
-    cdef np.ndarray[np.double_t, ndim=2] pS = pT
+    cdef np.ndarray[np.double_t, ndim=2] pS = np.zeros((S, S))
+    for u in range(W):
+        for v in range(W):
+            pS[    u,     v] = pT[    u,     v]
+            pS[    u, W + v] = pT[    u, W + v]
+            pS[W + u,     v] = pT[W + u,     v]
+        for v in range(w):
+            t = W + (u + v + 1) % W
+            pS[W + u,  t] = pT[W + u, t]
+    for s in range(S):
+        a = 0
+        for t in range(S):
+            a += pS[s, t]
+        for t in range(S):
+            pS[s, t] /= a
 
     # to avoid numerical precision errors we multiply alpha and beta
     # by this number
@@ -95,11 +94,8 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
             s = W + u
             t = u
             b += pS[t, s]*alpha[t, i-1]
-#            for v in range(w):
-#                t = W + (u - v - 1) % W
-#                b += pS[t, s]*alpha[t, i-1]
-            for v in range(W):
-                t = W + v
+            for v in range(w):
+                t = W + (u - v - 1) % W
                 b += pS[t, s]*alpha[t, i-1]
             b *= pE[s, X[i]]
             alpha[s, i] = b
@@ -131,11 +127,8 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
             s = W + u
             t = (u + 1) % W
             b += pS[s, t]*beta[t, i]
-#            for v in range(w):
-#                t = W + (u + v + 1) % W
-#                b += pS[s, t]*beta[t, i]
-            for v in range(W):
-                t = W + v
+            for v in range(w):
+                t = W + (u + v + 1) % W
                 b += pS[s, t]*beta[t, i]
             beta[s, i - 1] = b*a*pE[s, X[i - 1]]
 
@@ -158,15 +151,10 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
             t = (u + 1) % W
             xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pS[s, t]
             a += b
-#            for v in range(w):
-#                t = W + (u + v + 1) % W
-#                xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pS[s, t]
-#                a += b
-            for v in range(W):
-                t = W + v
+            for v in range(w):
+                t = W + (u + v + 1) % W
                 xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pS[s, t]
                 a += b
-
         for u in range(W):
             s = u
             t = u
@@ -176,13 +164,9 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
             s = W + u
             t = (u + 1) % W
             xi_i[s, t] /= a
-#            for v in range(w):
-#                t = W + (u + v + 1) % W
-#                xi_i[s, t] /= a
-            for v in range(W):
-                t = W + v
+            for v in range(w):
+                t = W + (u + v + 1) % W
                 xi_i[s, t] /= a
-
         if i==1:
             for u in range(W):
                 s = u
@@ -193,14 +177,9 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
                 s = W + u
                 t = (u + 1) % W
                 gm_c[s, X[0]] += xi_i[s, t]
-#                for v in range(w):
-#                    t = W + (u + v + 1) % W
-#                    gm_c[s, X[0]] += xi_i[s, t]
-            for v in range(W):
-                t = W + v
-                gm_c[s, X[0]] += xi_i[s, t]
-
-
+                for v in range(w):
+                    t = W + (u + v + 1) % W
+                    gm_c[s, X[0]] += xi_i[s, t]
         else:
             for u in range(W):
                 s = u
@@ -214,13 +193,11 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
                 t = (u + 1) % W
                 xi_c[s, t   ] += xi_i[s, t]
                 gm_c[s, X[i]] += xi_i[t, s]
-#                for v in range(w):
-#                    t = W + (u + v + 1) % W
-#                    xi_c[s, t   ] += xi_i[s, t]
-#                    gm_c[s, X[i]] += xi_i[t, s]
-                for v in range(W):
-                    t = W + v
+                for v in range(w):
+                    t = W + (u + v + 1) % W
                     xi_c[s, t   ] += xi_i[s, t]
+                for v in range(w):
+                    t = W + (u - v - 1) % W
                     gm_c[s, X[i]] += xi_i[t, s]
 
     res = hmm.FBResult()
@@ -231,6 +208,7 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
     res.gamma = gm_c
     res.logP = -np.log(scale).sum()
     return res
+
 
 class ProfileHMM(hmm.FixedHMM):
     def __init__(self, f, t, eps=None, p0=None):
@@ -538,36 +516,3 @@ class ProfileHMM(hmm.FixedHMM):
         res = cls(f=best_phmm.f, t=best_phmm.t, eps=best_phmm.eps, p0=best_phmm.p0)
         res.code_book = code_book
         return res
-
-    def extract(self, X, min_score=-2.0):
-        if self.code_book is not None:
-            X = np.array(map(self.code_book.code, X))
-
-        Z, logP = self.viterbi(X)
-        i_start = None
-        i_end = None
-        z_end = None
-        count = None
-
-        def valid_motif():
-            if min_score is None:
-                return True
-            return (self.score(X[i_start:i_end], Z[i_start:i_end])/
-                    float(count) >= min_score and count >= 0.3*self.W)
-
-        for i, z in enumerate(Z):
-            if z >= self.W:
-                if i_start is None:
-                    i_start = i
-                    count = 0
-                else:
-                    if z <= z_end:
-                        if valid_motif():
-                            yield (i_start, i_end), Z[i_start:i_end+1]
-                        i_start = i
-                        count = 0
-                i_end = i
-                z_end = z
-                count += 1
-        if i_start is not None and valid_motif():
-            yield (i_start, i_end), Z[i_start:i_end+1]
