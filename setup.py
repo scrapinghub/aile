@@ -1,10 +1,17 @@
 from setuptools import setup
+from setuptools.extension import Extension
 from Cython.Build import cythonize
 
-modules = cythonize(["hmm.pyx", "phmm.pyx"])
-setup(
-    ext_modules = modules
-)
+extra_compile_args = ["-O3"]
+extensions = [
+    Extension("phmm", ["phmm.pyx"],
+              extra_compile_args=extra_compile_args
+        ),
+    Extension("hmm", ["hmm.pyx"],
+              extra_compile_args=extra_compile_args
+        ),
+]
 
-for m in modules:
-    m.extra_compile_args.extend(["-O3", "-msse", "-msse2", "-msse3"])
+setup(
+    ext_modules = cythonize(extensions)
+)
