@@ -688,3 +688,122 @@ that we reach a local maximum. As long as we improve the starting
 point it is enough.
 
 
+Time Complexity
+---------------
+
+The time complexity of the parameter estimation problem is dominated
+by the estimation of :math:`\xi`. We have a triple loop of this form:
+
+.. code-block:: python
+
+    for i in range(n):
+        for s in range(2*W):
+	    for t in range(2*W):
+	        xi[s, t, i] = alpha[s, i - 1]*beta[t, i]*pT[s, t]
+
+
+In the above code the math symbols have been rewriten as numpy arrays:
+
++----------------------------+--------------------+
+| Math                       | Python             |
++============================+====================+
+| :math:`\xi_i(s, t)`        | ``xi[s, t, i]``    |
++----------------------------+--------------------+
+| :math:`\alpha_i(s)`        | ``alpha[s, i]``    |
++----------------------------+--------------------+
+| :math:`\beta_i(s)`         | ``beta[s, i]``     |
++----------------------------+--------------------+
+| :math:`P(Z_{i+1}=t|Z_i=s)` | ``pT[s, t]``       |
++----------------------------+--------------------+
+
+
+Time complexity is therefore :math:`O(nW^2)`. We can speed up the
+above triple loop by noticing that a lot of entries in the ``pT``
+matrix are zeros:
+
+.. only:: html
+
+   .. figure:: _static/transition_matrix_1.svg
+      :align: center
+      :figwidth: 60 %
+
+.. only:: latex
+
+   .. figure:: _static/transition_matrix_1.pdf
+      :align: center
+      :figwidth: 60 %
+
+Taking only the non-zero entries into account we could move complexity
+from :math:`4nW^2` to :math:`nW(W+3)`, which would divide time
+almost by a factor of 4.
+
+The reason that the lower right part of the matrix, that is the
+transition probabilities between motif states, is full is that the
+possibility of deleting states of the motif means that we can jump
+from any motif state to any other motif state. If on the other hand we
+didn't allow deletions the state transition diagram would look as:
+
+.. only:: html
+
+   .. figure:: _static/PHMM_4.svg
+      :align: center
+
+.. only:: latex
+
+   .. figure:: _static/PHMM_4.pdf
+      :align: center
+
+Transition probabilities from the background states would remain
+unchanged and transition probabilities from the motif states would simply be:
+
+.. math::
+
+   P\left(Z_{i+1}=b_{j+1}|Z_i=m_j\right) &= m_b \\
+   P\left(Z_{i+1}=m_{j+1}|Z_i=m_j\right) &= m
+
+Now the matrix of transition probabilities has the following non-zero
+entries:
+
+.. only:: html
+
+   .. figure:: _static/transition_matrix_2.svg
+      :align: center
+      :figwidth: 60 %
+
+.. only:: latex
+
+   .. figure:: _static/transition_matrix_2.pdf
+      :align: center
+      :figwidth: 60 %
+
+And time complexity is just :math:`4nW`. This simplified model is
+actually a very good approximation of the more complex one. The
+following plot shows how the values of the full model are distributed
+inside the transition matrix for typical parameters:
+
+
+.. only:: html
+
+   .. figure:: _static/transition_matrix_3.svg
+      :align: center
+      :figwidth: 60 %
+
+.. only:: latex
+
+   .. figure:: _static/transition_matrix_3.pdf
+      :align: center
+      :figwidth: 60 %
+
+To see how fast probabilities decay away from the diagonal consider
+the following plot showing the values around state 60 (motif state
+20):
+
+.. only:: html
+
+   .. figure:: _static/transition_matrix_4.svg
+      :align: center
+
+.. only:: latex
+
+   .. figure:: _static/transition_matrix_4.pdf
+      :align: center

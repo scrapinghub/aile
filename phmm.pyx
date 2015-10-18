@@ -1,3 +1,4 @@
+import time
 import math
 import numpy as np
 import scipy.optimize as opt
@@ -13,6 +14,223 @@ cimport cython
 def fit_best_seed(X, seeds, warmup=3, precision=1e-5, max_iter=200):
     return ProfileHMM.fit_best_seed(X, seeds, warmup, precision, max_iter)
 
+
+@cython.boundscheck(False)
+cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
+                      np.ndarray[np.double_t, ndim=1] pZ,
+                      np.ndarray[np.double_t, ndim=2] pE,
+                      np.ndarray[np.double_t, ndim=2] pT,
+                      unsigned int w = 4):
+    """Run the forward-backwards algorithm using data X.
+
+    Compute the following magnitudes using the current parameters:
+
+        - P(X[:i+1]          , Z[i]=j         )      alpha [j,    i]
+        - P(X[i:  ]                   | Z[i]=j)      beta  [j,    i]
+        - P(         Z[i-1]=j, Z[i]=k | X     )      xi    [j, k, i]
+        - P(         Z[i  ]=j         | X     )      gamma [j,    i]
+
+        - sum E   [log P(X,Z)]                       logE
+              Z|X
+    """
+
+    cdef unsigned int S = pE.shape[0]
+    cdef unsigned int A = pE.shape[1]
+    cdef int W = S/2
+
+    cdef unsigned int n = len(X) # sequence length
+    cdef unsigned int i          # index from 0 to n - 1
+    cdef double a, b             # accumulators
+    cdef int s, t, u, v # index from 0 to S - 1
+
+#    cdef np.ndarray[np.double_t, ndim=2] pS = np.zeros((S, S))
+#    for u in range(W):
+#        for v in range(W):
+#            pS[    u,     v] = pT[    u,     v]
+#            pS[    u, W + v] = pT[    u, W + v]
+#            pS[W + u,     v] = pT[W + u,     v]
+#        for v in range(w):
+#            t = W + (u + v + 1) % W
+#            pS[W + u,  t] = pT[W + u, t]
+#    for s in range(S):
+#        a = 0
+#        for t in range(S):
+#            a += pS[s, t]
+#        for t in range(S):
+#            pS[s, t] /= a
+    cdef np.ndarray[np.double_t, ndim=2] pS = pT
+
+    # to avoid numerical precision errors we multiply alpha and beta
+    # by this number
+    cdef np.ndarray[np.double_t, ndim=1] scale = np.zeros((n, ))
+
+    # alpha[j, i] = P(X[:i+1], Z[i]=j)
+    #             = sum_t{pT[t, s]alpha[t, i -1]}pE[s, X[i]]
+    cdef np.ndarray[np.double_t, ndim=2] alpha = np.zeros((S, n))
+
+    a = 0
+    b = 0
+    for s in range(S):
+        b = alpha[s, 0] = pE[s, X[0]]*pZ[s]
+        a += b
+    a = 1.0/a
+    for s in range(S):
+        alpha[s, 0] *= a
+    scale[0] = a
+
+    for i in range(1, n):
+        a = 0
+        for u in range(W):
+            b = 0
+            s = u
+            t = u
+            b += pS[t, s]*alpha[t, i-1]
+            t = W + (u - 1) % W
+            b += pS[t, s]*alpha[t, i-1]
+            b *= pE[s, X[i]]
+            alpha[s, i] = b
+            a += b
+
+            b = 0
+            s = W + u
+            t = u
+            b += pS[t, s]*alpha[t, i-1]
+#            for v in range(w):
+#                t = W + (u - v - 1) % W
+#                b += pS[t, s]*alpha[t, i-1]
+            for v in range(W):
+                t = W + v
+                b += pS[t, s]*alpha[t, i-1]
+            b *= pE[s, X[i]]
+            alpha[s, i] = b
+            a += b
+
+        if a > 0:
+            a = 1.0/a
+        for s in range(S):
+            alpha[s, i] *= a
+        scale[i] = a
+
+    # beta[s, i] = P(X[i:] | Z[i]=s)
+    #            = sum_t{pT[s, t]beta[t, i +1]}pE[s, X[i]]
+    cdef np.ndarray[np.double_t, ndim=2] beta = np.zeros((S, n))
+    for s in range(S):
+        beta[s, n-1] = pE[s, X[n-1]]*scale[n-1]
+    for i in range(n - 1, 0, -1):
+        a = scale[i - 1]
+        for u in range(W):
+            b = 0
+            s = u
+            t = u
+            b += pS[s, t]*beta[t, i]
+            t = W + u
+            b += pS[s, t]*beta[t, i]
+            beta[s, i - 1] = b*a*pE[s, X[i - 1]]
+
+            b = 0
+            s = W + u
+            t = (u + 1) % W
+            b += pS[s, t]*beta[t, i]
+#            for v in range(w):
+#                t = W + (u + v + 1) % W
+#                b += pS[s, t]*beta[t, i]
+            for v in range(W):
+                t = W + v
+                b += pS[s, t]*beta[t, i]
+            beta[s, i - 1] = b*a*pE[s, X[i - 1]]
+
+    # xi[j, k, i] = P(Z[i-1]=j, Z[i]=k | X)
+    cdef np.ndarray[np.double_t, ndim=2] xi_i = np.zeros((S, S))
+    cdef np.ndarray[np.double_t, ndim=2] xi_c = np.zeros((S, S))
+    cdef np.ndarray[np.double_t, ndim=2] gm_c = np.zeros((S, A))
+
+    for i in range(1, n):
+        a = 0
+        for u in range(W):
+            s = u
+            t = u
+            xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pS[s, t]
+            a += b
+            t = W + u
+            xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pS[s, t]
+            a += b
+            s = W + u
+            t = (u + 1) % W
+            xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pS[s, t]
+            a += b
+#            for v in range(w):
+#                t = W + (u + v + 1) % W
+#                xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pS[s, t]
+#                a += b
+            for v in range(W):
+                t = W + v
+                xi_i[s, t] = b = alpha[s, i - 1]*beta[t, i]*pS[s, t]
+                a += b
+
+        for u in range(W):
+            s = u
+            t = u
+            xi_i[s, t] /= a
+            t = W + u
+            xi_i[s, t] /= a
+            s = W + u
+            t = (u + 1) % W
+            xi_i[s, t] /= a
+#            for v in range(w):
+#                t = W + (u + v + 1) % W
+#                xi_i[s, t] /= a
+            for v in range(W):
+                t = W + v
+                xi_i[s, t] /= a
+
+        if i==1:
+            for u in range(W):
+                s = u
+                t = u
+                gm_c[s, X[0]] += xi_i[s, t]
+                t = W + u
+                gm_c[s, X[0]] += xi_i[s, t]
+                s = W + u
+                t = (u + 1) % W
+                gm_c[s, X[0]] += xi_i[s, t]
+#                for v in range(w):
+#                    t = W + (u + v + 1) % W
+#                    gm_c[s, X[0]] += xi_i[s, t]
+            for v in range(W):
+                t = W + v
+                gm_c[s, X[0]] += xi_i[s, t]
+
+
+        else:
+            for u in range(W):
+                s = u
+                t = u
+                xi_c[s, t   ] += xi_i[s, t]
+                gm_c[s, X[i]] += xi_i[t, s]
+                t = W + u
+                xi_c[s, t   ] += xi_i[s, t]
+                gm_c[s, X[i]] += xi_i[t, s]
+                s = W + u
+                t = (u + 1) % W
+                xi_c[s, t   ] += xi_i[s, t]
+                gm_c[s, X[i]] += xi_i[t, s]
+#                for v in range(w):
+#                    t = W + (u + v + 1) % W
+#                    xi_c[s, t   ] += xi_i[s, t]
+#                    gm_c[s, X[i]] += xi_i[t, s]
+                for v in range(W):
+                    t = W + v
+                    xi_c[s, t   ] += xi_i[s, t]
+                    gm_c[s, X[i]] += xi_i[t, s]
+
+    res = hmm.FBResult()
+    res.scale = scale
+    res.alpha = alpha
+    res.beta = beta
+    res.xi = xi_c
+    res.gamma = gm_c
+    res.logP = -np.log(scale).sum()
+    return res
 
 class ProfileHMM(hmm.FixedHMM):
     def __init__(self, f, t, eps=None, p0=None):
@@ -87,11 +305,19 @@ class ProfileHMM(hmm.FixedHMM):
         self._f = value
         self.set_pE(self.calc_pE(value))
 
+    def forward_backward(self,
+                         np.ndarray[np.int_t, ndim=1] X,
+                         unsigned int w=3):
+        return forward_backward(X, self.pZ, self.pE, self.pT, w)
+
     def fit_em_1(self, np.ndarray[np.int_t, ndim=1] sequence):
         """Run a single iteration of the EM method"""
+        t1 = time.clock()
         fb = self.forward_backward(sequence)
+        t2 = time.clock()
         # Take into account the priors on the parameters
         fb.logP += np.sum((self.eps - 1)*util.safe_log(self.f[1:,:]))
+        print self.W, len(sequence), fb.logP, t2 - t1
 
         cdef unsigned int W = self.W
         cdef unsigned int A = self.A

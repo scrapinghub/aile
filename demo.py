@@ -136,21 +136,26 @@ def adjust(phmm, matches):
     return phmm2
 
 
-def itemize(phmm, min_prob=0.01):
-    anc = phmm.code_book.code('a')
-    txt = phmm.code_book.code('[T]')
-    img = phmm.code_book.code('img')
+def itemize(phmm, min_prob=0.01, tags=['[T]', 'a', 'img']):
+    a = map(phmm.code_book.code, tags)
     return [phmm.W + j for j, g in enumerate(phmm.f[1:])
-            if (g[anc] >= min_prob or g[txt] >= min_prob or g[img] >= min_prob)]
+            if np.any(g[a] >= min_prob)]
 
 
 def demo2():
+    P = 3
     tags_1, fragments_1 = zip(*[
         (tag, fragment)
-        for i in range(1, 10)
+        for i in range(1, P+1)
         for tag, fragment in tagify(hp.url_to_page(
                 'https://patchofland.com/investments/page/{0}.html'.format(i)))
     ])
+    #tags_1, fragments_1 = zip(*[
+    #    (tag, fragment)
+    #    for i in range(1, P+1)
+    #    for tag, fragment in tagify(hp.url_to_page(
+    #            'https://news.ycombinator.com/news?p={0}'.format(i)))
+    #])
 
     X_train = np.array(tags_1)
 
@@ -159,7 +164,10 @@ def demo2():
     fields = itemize(phmm)
 
     page = hp.url_to_page(
-        'https://patchofland.com/investments/page/10.html')
+        'https://patchofland.com/investments/page/{0}.html'.format(P+1))
+    #page = hp.url_to_page(
+    #    'https://news.ycombinator.com/news?p={0}'.format(P+1))
+
     tags_2, fragments_2 = zip(*tagify(page))
 
     for (i, j), Z, score, H in extract(phmm, tags_2, fragments_2):
