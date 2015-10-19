@@ -692,7 +692,8 @@ Time Complexity
 ---------------
 
 The time complexity of the parameter estimation problem is dominated
-by the estimation of :math:`\xi`. We have a triple loop of this form:
+by the estimation of :math:`alpha`, :math:`beta` and :math:`\xi`. 
+We have a triple loops of this form:
 
 .. code-block:: python
 
@@ -807,3 +808,44 @@ the following plot showing the values around state 60 (motif state
 
    .. figure:: _static/transition_matrix_4.pdf
       :align: center
+
+We can make a compromise between the fully diagonal model and a model
+where only :math:`w` elements away from the diagonal are retained. The
+transition matrix would look like:
+
+.. only:: html
+
+   .. figure:: _static/transition_matrix_5.svg
+      :align: center
+      :figwidth: 60 %
+
+.. only:: latex
+
+   .. figure:: _static/transition_matrix_5.pdf
+      :align: center
+      :figwidth: 60 %
+
+Time complexity would be then :math:`nW(3 + w)`.
+Let's call :math:`\tilde{P}(\pmb{X}, \pmb{Z})` the probability
+distribution of the sequence under this new approximate transition
+matrix. We can get a modified EM algorithm:
+
+.. math::
+
+   \log \left[\sum_{\pmb{Z}} P(\pmb{X}, \pmb{Z})\right] &= 
+   \log \left[\sum_{\pmb{Z}} \tilde{P}(\pmb{X}, \pmb{Z})
+   \frac{P(\pmb{X}, \pmb{Z})}{\tilde{P}(\pmb{X}, \pmb{Z})}\right] \\
+   & \geq \sum_{\pmb{Z}}\tilde{P}(\pmb{X}, \pmb{Z})\log\frac{P(\pmb{X}, \pmb{Z})}{\tilde{P}(\pmb{X}, \pmb{Z})}
+
+The EM algorithm proceeds as usual but with a modified function to
+maximize:
+
+.. math::
+
+   Q(\pmb{\theta}|\pmb{\theta}^0) = \log P(\pmb{\theta}) +
+   E_{\tilde{P}\left(\pmb{Z}|\pmb{x}^D,\pmb{\theta}^0\right)}\left[\log P(\pmb{x}^D,\pmb{Z}|\pmb{\theta})\right]
+
+The only modification in the forward-backward algorithm is that there
+are more zeros now on the transition matrix. We get halfway to a
+variational approach like the one in `Factorial hidden Markov models <http://www.ee.columbia.edu/~sfchang/course/svia-F03/papers/factorial-HMM-97.pdf>`_.
+
