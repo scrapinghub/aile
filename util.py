@@ -76,6 +76,7 @@ def model_score(logP0, logP1, fp):
 
 
 def model_select(models):
+    models = sorted(models, key=lambda x: x[2])
     (model0, logP0, n0), models = models[0], models[1:]
     scores = [model_score(logP0, logP, n - n0) for model, logP, n in models]
     best_score = min(scores)
@@ -133,14 +134,14 @@ class CodeBook(object):
         }
         self.total_count = sum(self.counter.values())
         self.frequencies = np.array(
-            [self.counter[letter] for letter in self.letters],
+            [self.counter[letter] for letter in self.letters] + [1],
             dtype=float
         )
         self.frequencies /= float(self.total_count)
 
     def __len__(self):
         """Number of symbols"""
-        return len(self.letters)
+        return len(self.letters) + 1
 
     def code(self, letter):
         """Convert letter to integer"""
