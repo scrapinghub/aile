@@ -91,7 +91,7 @@ def match_tags(tags):
     return match
 
 
-def extract(phmm, tags, fragments, m=0.2, G=0.2):
+def extract(phmm, tags, fragments, m=0.2, G=0.1):
     X = np.array(map(phmm.code_book.code, tags))
     Z, logP = phmm.viterbi(X)
     match = match_tags(fragments)
@@ -103,7 +103,7 @@ def extract(phmm, tags, fragments, m=0.2, G=0.2):
             while k - i <= phmm.W*(1.0 + m):
                 if k - i >= phmm.W*(1.0 - m):
                     H = np.sum(
-                            np.abs(np.bincount(Z[i:k])[phmm.W:] - 1)
+                            np.abs(np.bincount(Z[i:k], minlength=phmm.S)[phmm.W:] - 1)
                         )/float(phmm.W)
                     if H <= G:
                         score = phmm.score(X[i:k], Z[i:k])/(k - i)
@@ -157,7 +157,7 @@ TRAIN_URLS_1 = [
 ]
 TEST_URL_1 = 'https://news.ycombinator.com/news?p={0}'.format(N_TRAIN + 1)
 
-N_TRAIN = 9
+N_TRAIN = 12
 TRAIN_URLS_2 = [
     'https://patchofland.com/investments/page/{0}.html'.format(i)
     for i in range(1, N_TRAIN)
@@ -171,7 +171,7 @@ TRAIN_URLS_3 = [
 ]
 TEST_URL_3 = 'http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}'.format(N_TRAIN + 1)
 
-N_TRAIN = 3
+N_TRAIN = 6
 TRAIN_URLS_4 = [
     'http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F'.format(i)
     for i in range(1, N_TRAIN)
@@ -205,7 +205,7 @@ def demo2(train_urls, test_url):
         print 80*'#'
         print page.body[fragments_2[i].start:fragments_2[j].end]
         print 80*'-'
-        print Z
+        print score, H, Z
         print 80*'-'
         f = {}
         for k, z in enumerate(Z):
