@@ -692,7 +692,7 @@ Time Complexity
 ---------------
 
 The time complexity of the parameter estimation problem is dominated
-by the estimation of :math:`alpha`, :math:`beta` and :math:`\xi`. 
+by the estimation of :math:`\alpha`, :math:`\beta` and :math:`\xi`. 
 We have a triple loops of this form:
 
 .. code-block:: python
