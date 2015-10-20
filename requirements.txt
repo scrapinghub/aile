@@ -5,3 +5,4 @@ tabulate>=0.7.5
 selenium>=2.47.1
 pomegranate>=0.2.6
 cython>=0.23.3
+pandas>=0.15.2
