@@ -15,6 +15,17 @@ def fit_best_seed(X, seeds, warmup=3, precision=1e-5, max_iter=200):
     return ProfileHMM.fit_best_seed(X, seeds, warmup, precision, max_iter)
 
 
+def fit_seed(X, seed, warmup):
+    f0, t0, p0, eps = seed
+    phmm = ProfileHMM(f=f0, t=t0, p0=p0, eps=eps)
+    logP = phmm.fit_em_n(X, warmup)
+    return (logP, (phmm.f, phmm.t, phmm.p0, phmm.eps))
+
+def fit_em(X, params, precision, max_iter):
+    phmm = ProfileHMM(f=params[0], t=params[1], p0=params[2], eps=params[3])
+    logP = phmm.fit_em(X, precision=precision, max_iter=max_iter)
+    return phmm, logP
+
 @cython.boundscheck(False)
 cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
                       np.ndarray[np.double_t, ndim=1] pZ,
@@ -445,19 +456,19 @@ class ProfileHMM(hmm.FixedHMM):
 
     @classmethod
     def fit_best_seed(cls, X, seeds, warmup=3, precision=1e-5, max_iter=200):
+        fit = Parallel(n_jobs=-1)(
+            delayed(fit_seed)(X, seed, warmup)
+            for seed in seeds)
         best_phmm = None
         best_logP = None
-        for (f0, t0, p0, eps) in seeds:
-            phmm = cls(f=f0, t=t0, p0=p0, eps=eps)
-            logP = phmm.fit_em_n(X, warmup)
+        for logP, params in fit:
             if best_logP is None or logP > best_logP:
                 best_logP = logP
-                best_phmm = phmm
-        best_logP = best_phmm.fit_em(X, precision=precision, max_iter=max_iter)
-        return best_phmm, best_logP
+                best_phmm = params
+        return best_phmm
 
     @classmethod
-    def fit(cls, sequence, window_min, window_max=None,
+    def fit(cls, sequence, widths,
             gamma=0.1, steps=4, n_seeds=1, precision=1e-5,
             max_iter=200, guess_emissions=None):
         """Fit the model parameters using data.
@@ -481,21 +492,21 @@ class ProfileHMM(hmm.FixedHMM):
                                 W        : motif width
                                 X        : encoded sequence
         """
-        if window_max == None:
-            window_max = window_min
-
         code_book = util.CodeBook(sequence)
         X = np.array(map(code_book.code, sequence))
 
         rB = rD = np.linspace(0, 1, steps + 1, endpoint=False)[1:]
-        rW = range(window_min, window_max + 1)
-        best = Parallel(n_jobs=-1)(delayed(fit_best_seed)(
-                    X,
-                    seeds     = ProfileHMM.seeds(X, code_book, W, rB, rD, guess_emissions),
-                    warmup    = 3,
-                    precision = precision,
-                    max_iter  = max_iter
-                ) for W in rW)
+        rW = widths
+        best_seeds = [cls.fit_best_seed(
+                        X,
+                        seeds     = ProfileHMM.seeds(X, code_book, W, rB, rD, guess_emissions),
+                        warmup    = 3,
+                        precision = precision,
+                        max_iter  = max_iter
+                    ) for W in rW]
+        best = Parallel(n_jobs=-1)(
+            delayed(fit_em)(X, param, precision, max_iter)
+            for param in best_seeds)
         # Null model
         A = len(code_book)
         logP0 = len(sequence)*np.sum(
