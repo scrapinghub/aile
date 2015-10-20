@@ -306,7 +306,6 @@ class ProfileHMM(hmm.FixedHMM):
         t2 = time.clock()
         # Take into account the priors on the parameters
         fb.logP += np.sum((self.eps - 1)*util.safe_log(self.f[1:,:]))
-        print self.W, len(sequence), fb.logP, t2 - t1
 
         cdef unsigned int W = self.W
         cdef unsigned int A = self.A

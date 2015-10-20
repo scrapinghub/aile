@@ -1,5 +1,8 @@
+import sys
 import heapq
+import codecs
 
+import pandas as pd
 import numpy as np
 import scipy.spatial.distance as dst
 import scrapely.htmlpage as hp
@@ -74,6 +77,7 @@ def tagify(page):
     return filter(lambda x: x[0] is not None,
                   [x for f in page.parsed_body for x in convert(f)])
 
+
 def match_tags(tags):
     match = np.repeat(-1, len(tags))
     stack = []
@@ -91,7 +95,7 @@ def match_tags(tags):
     return match
 
 
-def extract(phmm, tags, fragments, m=0.2, G=0.1):
+def extract_motifs(phmm, tags, fragments, m=0.2, G=0.3):
     X = np.array(map(phmm.code_book.code, tags))
     Z, logP = phmm.viterbi(X)
     match = match_tags(fragments)
@@ -150,35 +154,66 @@ def guess_motif_width(X, n_estimates=2, min_width=10, max_width=400):
             for d, w in heapq.nsmallest(n_estimates, D, key=lambda x: x[0])]
 
 
-N_TRAIN = 2
-TRAIN_URLS_1 = [
-    'https://news.ycombinator.com/news?p={0}'.format(i)
-    for i in range(1, N_TRAIN)
-]
-TEST_URL_1 = 'https://news.ycombinator.com/news?p={0}'.format(N_TRAIN + 1)
+def extract_items(page, fragments, motifs, fields):
+    items = []
+    for (i, j), Z, score, H in motifs:
+        f = {}
+        for k, z in enumerate(Z):
+            if z in fields:
+                fragment = fragments[i + k]
+                if fragment is not None:
+                    if fragment.is_text_content:
+                        f[z] = page.body[fragment.start:fragment.end]
+                    elif (isinstance(fragment, hp.HtmlTag) and
+                          fragment.tag_type != hp.HtmlTagType.CLOSE_TAG):
+                        if fragment.tag == 'a':
+                            f[z] = fragment.attributes.get('href', None)
+                        if fragment.tag == 'img':
+                            f[z] = fragment.attributes.get('src', None)
+        items.append([f.get(field, None) for field in fields])
+    return pd.DataFrame.from_records(items)
 
-N_TRAIN = 12
-TRAIN_URLS_2 = [
-    'https://patchofland.com/investments/page/{0}.html'.format(i)
-    for i in range(1, N_TRAIN)
-]
-TEST_URL_2 = 'https://patchofland.com/investments/page/{0}.html'.format(N_TRAIN + 1)
 
-N_TRAIN = 6
-TRAIN_URLS_3 = [
-    'http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}'.format(i)
-    for i in range(1, N_TRAIN)
-]
-TEST_URL_3 = 'http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}'.format(N_TRAIN + 1)
+def uninformative_fields(items):
+    return [col
+            for col in items.columns
+            if (items[col][0] == items[col]).all()]
 
-N_TRAIN = 6
-TRAIN_URLS_4 = [
-    'http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F'.format(i)
-    for i in range(1, N_TRAIN)
-]
-TEST_URL_4 = 'http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F'.format(N_TRAIN + 1)
 
-def demo2(train_urls, test_url):
+def train_test(pattern, start, end):
+    return ([pattern.format(i) for i in range(start, end + 1)],
+            pattern.format(end + 1))
+
+
+def train_test_1(n_train=2):
+    return train_test('https://news.ycombinator.com/news?p={0}', 1, n_train + 1)
+
+
+def train_test_2(n_train=12):
+    return train_test('https://patchofland.com/investments/page/{0}.html', 1, n_train + 1)
+
+
+def train_test_3(n_train=6):
+    return train_test('http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}', 1, n_train + 1)
+
+
+def train_test_4(n_train=6):
+    return train_test('http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F', 1, n_train + 1)
+
+
+def train_test_5(n_train=3):
+    pattern = 'http://lambda-the-ultimate.org/node?from={0}'
+    return ([pattern.format(i) for i in range(0, n_train*10, 10)],
+            pattern.format(n_train*10))
+
+
+def train_test_6(n_train=3):
+    return train_test('http://arstechnica.com/page/{0}/', 1, n_train + 1)
+
+
+def demo2(train_test, out='demo.html'):
+    train_urls, test_url = train_test
+
     print 'Downloading and parsing test urls... ',
     tags_1, fragments_1 = zip(*[
         (tag, fragment)
@@ -195,39 +230,31 @@ def demo2(train_urls, test_url):
         guess_emissions=html_guess_emissions,
         precision=1e-3)
     print 'Motif width      :', phmm.W
-    phmm = adjust(phmm, extract(phmm, tags_1, fragments_1))
+    train_motifs = extract_motifs(phmm, tags_1, fragments_1)
+    phmm = adjust(phmm, train_motifs)
     fields = itemize(phmm)
 
     page = hp.url_to_page(test_url)
     tags_2, fragments_2 = zip(*tagify(page))
 
-    for (i, j), Z, score, H in extract(phmm, tags_2, fragments_2):
-        print 80*'#'
-        print page.body[fragments_2[i].start:fragments_2[j].end]
-        print 80*'-'
-        print score, H, Z
-        print 80*'-'
-        f = {}
-        for k, z in enumerate(Z):
-            if z in fields:
-                fragment = fragments_2[i + k]
-                if fragment is not None:
-                    if fragment.is_text_content:
-                        f[z] = page.body[fragment.start:fragment.end]
-                    elif (isinstance(fragment, hp.HtmlTag) and
-                          fragment.tag_type != hp.HtmlTagType.CLOSE_TAG):
-                        if fragment.tag == 'a':
-                            f[z] = fragment.attributes.get('href', None)
-                        if fragment.tag == 'img':
-                            f[z] = fragment.attributes.get('src', None)
-        for l, field in enumerate(fields):
-            s = f.get(field, None)
-            if s is not None:
-                s = s.encode('ascii', 'ignore')
-            print '{0: 2d} -> {1}'.format(l, s)
+    motifs = extract_motifs(phmm, tags_2, fragments_2)
+    items = extract_items(page, fragments_2, motifs, fields)
+
+    outf = codecs.open(out, 'w', encoding='utf-8')
+    items.to_html(outf)
+    print items
 
     return phmm
 
 
 if __name__ == '__main__':
-    phmm = demo2(TRAIN_URLS_4, TEST_URL_4)
+    tests = [
+        train_test_1,
+        train_test_2,
+        train_test_3,
+        train_test_4,
+        train_test_5,
+        train_test_6
+    ]
+
+    phmm = demo2(tests[int(sys.argv[1])-1]())
