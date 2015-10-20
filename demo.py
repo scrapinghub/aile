@@ -1,3 +1,5 @@
+import heapq
+
 import numpy as np
 import scipy.spatial.distance as dst
 import scrapely.htmlpage as hp
@@ -134,29 +136,47 @@ def adjust(phmm, matches):
     return phmm2
 
 
-def itemize(phmm, min_prob=0.01, tags=['[T]', 'a', 'img']):
+def itemize(phmm, ratio=2.0, tags=['[T]', 'a', 'img']):
     a = map(phmm.code_book.code, tags)
+    h = phmm.f[0,a]
     return [phmm.W + j for j, g in enumerate(phmm.f[1:])
-            if np.any(g[a] >= min_prob)]
+            if np.any(g[a]/h >= ratio)]
 
 
-def guess_motif_width(X, min_width=10, max_width=400):
-    D = np.array([dst.hamming(X[:-w], X[w:])
-                  for w in np.arange(min_width, max_width)])
-    return min_width + np.argmin(D)
+def guess_motif_width(X, n_estimates=2, min_width=10, max_width=400):
+    D = [(dst.hamming(X[:-w], X[w:]), w)
+         for w in np.arange(min_width, max_width)]
+    return [min_width + w
+            for d, w in heapq.nsmallest(n_estimates, D, key=lambda x: x[0])]
 
 
-N_TRAIN = 3
+N_TRAIN = 2
 TRAIN_URLS_1 = [
     'https://news.ycombinator.com/news?p={0}'.format(i)
-    for i in range(N_TRAIN)
+    for i in range(1, N_TRAIN)
 ]
 TEST_URL_1 = 'https://news.ycombinator.com/news?p={0}'.format(N_TRAIN + 1)
+
+N_TRAIN = 9
 TRAIN_URLS_2 = [
     'https://patchofland.com/investments/page/{0}.html'.format(i)
-    for i in range(N_TRAIN)
+    for i in range(1, N_TRAIN)
 ]
 TEST_URL_2 = 'https://patchofland.com/investments/page/{0}.html'.format(N_TRAIN + 1)
+
+N_TRAIN = 6
+TRAIN_URLS_3 = [
+    'http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}'.format(i)
+    for i in range(1, N_TRAIN)
+]
+TEST_URL_3 = 'http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}'.format(N_TRAIN + 1)
+
+N_TRAIN = 3
+TRAIN_URLS_4 = [
+    'http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F'.format(i)
+    for i in range(1, N_TRAIN)
+]
+TEST_URL_4 = 'http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F'.format(N_TRAIN + 1)
 
 def demo2(train_urls, test_url):
     print 'Downloading and parsing test urls... ',
@@ -167,9 +187,13 @@ def demo2(train_urls, test_url):
     ])
     print 'done'
     X_train = np.array(tags_1)
-    W = guess_motif_width(X_train)
+    W = guess_motif_width(X_train, n_estimates=2)
     print 'Motif width guess:', W
-    phmm = ProfileHMM.fit(X_train, W - 2, W + 2, guess_emissions=html_guess_emissions)
+    phmm = ProfileHMM.fit(
+        X_train,
+        W,
+        guess_emissions=html_guess_emissions,
+        precision=1e-3)
     print 'Motif width      :', phmm.W
     phmm = adjust(phmm, extract(phmm, tags_1, fragments_1))
     fields = itemize(phmm)
@@ -179,6 +203,10 @@ def demo2(train_urls, test_url):
 
     for (i, j), Z, score, H in extract(phmm, tags_2, fragments_2):
         print 80*'#'
+        print page.body[fragments_2[i].start:fragments_2[j].end]
+        print 80*'-'
+        print Z
+        print 80*'-'
         f = {}
         for k, z in enumerate(Z):
             if z in fields:
@@ -190,8 +218,6 @@ def demo2(train_urls, test_url):
                           fragment.tag_type != hp.HtmlTagType.CLOSE_TAG):
                         if fragment.tag == 'a':
                             f[z] = fragment.attributes.get('href', None)
-                            if f[z] is None:
-                                print fragment, page.body[fragment.start:fragment.end]
                         if fragment.tag == 'img':
                             f[z] = fragment.attributes.get('src', None)
         for l, field in enumerate(fields):
@@ -204,4 +230,4 @@ def demo2(train_urls, test_url):
 
 
 if __name__ == '__main__':
-    phmm = demo2(TRAIN_URLS_1, TEST_URL_1)
+    phmm = demo2(TRAIN_URLS_4, TEST_URL_4)
