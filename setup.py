@@ -4,10 +4,10 @@ from Cython.Build import cythonize
 
 extra_compile_args = ["-O3"]
 extensions = [
-    Extension("phmm", ["aile/phmm.pyx"],
+    Extension("aile.phmm", ["aile/phmm.pyx"],
               extra_compile_args=extra_compile_args
         ),
-    Extension("hmm", ["aile/hmm.pyx"],
+    Extension("aile.hmm", ["aile/hmm.pyx"],
               extra_compile_args=extra_compile_args
         ),
 ]

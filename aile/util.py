@@ -47,21 +47,21 @@ def random_pick(x, n=1):
     return [x[random.randint(0, len(x) - 1)] for i in xrange(n)]
 
 
-def guess_emissions(code_book, X, gamma=0.1):
-    """Given a sequence X that has been encoded with code_book guess the
-    initial value of the emission matrix used in MEME and ProfileHMM"""
-    A = len(code_book)
+def guess_emissions(freqs, X, gamma=0.1):
+    """Given a sequence X guess the initial value of the emission matrix used 
+    in MEME and ProfileHMM"""
+    A = len(freqs)
     W = len(X)
     def g(m):
         p = np.log(1.0/float(A))
         return (1.0 - m)*np.log((1.0 - m)/(A - 1)) - p + m*np.log(m) + gamma*p
     m = opt.newton(g, 0.95)
     # Position Frequency Matrix
-    # columns    : one for each code_book letter
+    # columns    : one for each letter
     # row 0      : background frequency
     # row 1 .. W : motif frequency
     f = np.zeros((W + 1, A))
-    f[0, :] = code_book.frequencies
+    f[0, :] = freqs
     for j in xrange(W):
         f[j + 1, :   ] = (1.0 - m)/(A - 1)
         f[j + 1, X[j]] = m

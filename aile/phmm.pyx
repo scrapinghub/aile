@@ -11,21 +11,22 @@ cimport numpy as np
 cimport cython
 
 
-def fit_best_seed(X, seeds, warmup=3, precision=1e-5, max_iter=200):
-    return ProfileHMM.fit_best_seed(X, seeds, warmup, precision, max_iter)
-
-
+# Module-level function wrappers to allow Parallel execution
+############################################################
 def fit_seed(X, seed, warmup):
     f0, t0, p0, eps = seed
     phmm = ProfileHMM(f=f0, t=t0, p0=p0, eps=eps)
     logP = phmm.fit_em_n(X, warmup)
     return (logP, (phmm.f, phmm.t, phmm.p0, phmm.eps))
 
+
 def fit_em(X, params, precision, max_iter):
     phmm = ProfileHMM(f=params[0], t=params[1], p0=params[2], eps=params[3])
     logP = phmm.fit_em(X, precision=precision, max_iter=max_iter)
     return phmm, logP
 
+
+# Moved out of class, to declare as cdef to improve performance
 @cython.boundscheck(False)
 cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
                       np.ndarray[np.double_t, ndim=1] pZ,
@@ -41,7 +42,7 @@ cdef forward_backward(np.ndarray[np.int_t, ndim=1] X,
         - P(         Z[i-1]=j, Z[i]=k | X     )      xi    [j, k, i]
         - P(         Z[i  ]=j         | X     )      gamma [j,    i]
 
-        - sum E   [log P(X,Z)]                       logE
+        - sum E   [log P(X,Z)]                       logP
               Z|X
     """
 
@@ -252,15 +253,15 @@ class ProfileHMM(hmm.FixedHMM):
 
         self.eps = eps if eps is not None else np.repeat(1.0, self.A)
 
-        self.code_book = None
-
     def calc_pE(self, f):
+        """Compute the emission matrix given the parameters 'f'"""
         pE = np.zeros((2*self.W, f.shape[1]))
         pE[:self.W, :] = f[ 0, :] # copy W times the background emissions
         pE[self.W:, :] = f[1:, :] # copy as is the motif probabilities
         return pE
 
     def calc_pT(self, t):
+        """Compute the transition matrix given the parameters 't'"""
         b_in, b_out, d, mb, m, md = t
         pT = np.zeros((2*self.W, 2*self.W))
         F = md*(d**np.arange(self.W))*(1-d)/(1 - d**self.W)
@@ -294,17 +295,20 @@ class ProfileHMM(hmm.FixedHMM):
         self._f = value
         self.set_pE(self.calc_pE(value))
 
+    # Wrapper around the cdef function
     def forward_backward(self,
                          np.ndarray[np.int_t, ndim=1] X,
                          unsigned int w=3):
         return forward_backward(X, self.pZ, self.pE, self.pT, w)
 
     def fit_em_1(self, np.ndarray[np.int_t, ndim=1] sequence):
-        """Run a single iteration of the EM method"""
-        t1 = time.clock()
+        """Run a single iteration of the EM method.
+
+        Improves the current f and t parameters and returns logP (the logarithm
+        of the probability of the parameters given the data)
+        """
         fb = self.forward_backward(sequence)
-        t2 = time.clock()
-        # Take into account the priors on the parameters
+        # Take into account the priors on the parameters (Dirichlet prior)
         fb.logP += np.sum((self.eps - 1)*util.safe_log(self.f[1:,:]))
 
         cdef unsigned int W = self.W
@@ -403,6 +407,7 @@ class ProfileHMM(hmm.FixedHMM):
                np.ndarray[np.int_t, ndim=1] sequence,
                double precision=1e-3,
                unsigned int max_iter=100):
+        """Iterate the EM algorithm until we get the desired precision"""
         logP0 = None
         it = 0
         while True:
@@ -411,9 +416,7 @@ class ProfileHMM(hmm.FixedHMM):
             if logP0:
                 err = (logP0 - logP1)/logP0
                 if err < 0:
-                    # should never happen
-                    # self.logger.warning(
-                    #     'ProfileHMM.fit_em: log(P) decreased {0}({1:3f}%)'.format(logP0, err*100.0))
+                    # TODO
                     break
                 if err < precision:
                     break
@@ -422,25 +425,26 @@ class ProfileHMM(hmm.FixedHMM):
             if it > max_iter:
                 # TODO
                 break
-        # print self.logger.info(
-        #    'ProfileHMM.fit_em: logP = {0}, W = {1}, t = {2:.2e}, {3:.2e}, {4:.2e}, {5:.2e}, {6:.2e} {7:.2e}'.format(
-        #        logP0, self.W, self.t[0], self.t[1], self.t[2], self.t[3], self.t[4], self.t[5]
-        #    ))
         return logP1
 
     @staticmethod
-    def seeds(X, code_book, W, rB, rD, guess_emissions=None):
-        """Given a sequence X, which has been coded using code_book,
-        and a range of b_out (rB) and d (rD) return a set of initial
-        parameters"""
+    def frequencies(X, W, A):
+        f = np.bincount(X, minlength=A)
+        f = f.astype(float)
+        return f/f.sum()
 
+    @staticmethod
+    def seeds(X, W, A, rB, rD, guess_emissions=None, gamma=0.1):
+        """Given a sequence X and a range of b_out (rB) and d (rD) return a
+        set of initial parameters"""
         n_seeds = len(rB)*len(rD)
         if guess_emissions is None:
-            f0 = [util.guess_emissions(code_book, X[i:i + W])
+            freqs = ProfileHMM.frequencies(X, W, A)
+            f0 = [util.guess_emissions(freqs, X[i:i + W], gamma)
                   for i in util.random_pick(range(len(X) - W - 1), n_seeds)]
             eps = [1.0 + 1e-3*f[0, :] for f in f0]
         else:
-            f0, eps = guess_emissions(code_book, W, X, n_seeds)
+            f0, eps = guess_emissions(W, n_seeds)
 
         def gen_random_t0(b_out, d):
             t = np.random.rand(6)
@@ -454,31 +458,28 @@ class ProfileHMM(hmm.FixedHMM):
         return zip(f0, t0, p0, eps)
 
     @classmethod
-    def fit_best_seed(cls, X, seeds, warmup=3, precision=1e-5, max_iter=200):
-        fit = Parallel(n_jobs=-1)(
-            delayed(fit_seed)(X, seed, warmup)
-            for seed in seeds)
-        best_phmm = None
+    def fit_seed(cls, X, seeds, warmup=3, precision=1e-5, max_iter=200):
+        """Fit the seeds during 'warmup' iterations of the EM algorithm and
+        return the most promising seed after these iterations"""
+        improved = Parallel(n_jobs=-1)(
+            delayed(fit_seed)(X, seed, warmup) for seed in seeds)
+        best_seed = None
         best_logP = None
-        for logP, params in fit:
+        for logP, seed in improved:
             if best_logP is None or logP > best_logP:
                 best_logP = logP
-                best_phmm = params
-        return best_phmm
+                best_seed = seed
+        return best_seed
 
     @classmethod
-    def fit(cls, sequence, widths,
-            gamma=0.1, steps=4, n_seeds=1, precision=1e-5,
-            max_iter=200, guess_emissions=None):
+    def fit(cls, X, widths, gamma=0.1, steps=4,
+            precision=1e-5, max_iter=200, guess_emissions=None):
         """Fit the model parameters using data.
 
-        - sequence       : the sequence to fit
-        - window_min     : minimum motif width to consider
-        - window_max     : maximum motif width to consider.
-                           If None only one motif width will be considered.
+        - X              : the sequence to fit
+        - widths         : motif width to consider
         - gamma          : parameter to pass to the guess_emissions function
         - steps          : number of steps in the grid (b_out,d)
-        - n_seeds        : number of seeds per grid element
         - precision      : EM desired precision in logP
         - max_iter       : maximum iterations in EM
         - guess_emissions: a function to compute the initial value of the
@@ -491,29 +492,17 @@ class ProfileHMM(hmm.FixedHMM):
                                 W        : motif width
                                 X        : encoded sequence
         """
-        code_book = util.CodeBook(sequence)
-        X = np.array(map(code_book.code, sequence))
-
+        A = max(X) + 2
         rB = rD = np.linspace(0, 1, steps + 1, endpoint=False)[1:]
-        rW = widths
-        best_seeds = [cls.fit_best_seed(
+        best_seeds = [cls.fit_seed(
                         X,
-                        seeds     = ProfileHMM.seeds(X, code_book, W, rB, rD, guess_emissions),
+                        seeds     = ProfileHMM.seeds(X, W, A, rB, rD, guess_emissions, gamma),
                         warmup    = 3,
                         precision = precision,
                         max_iter  = max_iter
-                    ) for W in rW]
+                    ) for W in widths]
         best = Parallel(n_jobs=-1)(
-            delayed(fit_em)(X, param, precision, max_iter)
-            for param in best_seeds)
-        # Null model
-        A = len(code_book)
-        logP0 = len(sequence)*np.sum(
-            code_book.frequencies*np.log(code_book.frequencies))
-        models = [(None, logP0, A - 1)]
-        for phmm, logP in best:
-            models.append((phmm, logP, (phmm.W + 1)*(A - 1)))
-        best_phmm = util.model_select(models)
+            delayed(fit_em)(X, seed, precision, max_iter) for seed in best_seeds)
 
         #-----------------------------------------------------------------------
         # WARNING
@@ -523,6 +512,5 @@ class ProfileHMM(hmm.FixedHMM):
         # It looks like some pickling error or who knows what. As a hack we
         # rebuild the model,  it seems that parameters f and t arrive allright
         #-----------------------------------------------------------------------
-        res = cls(f=best_phmm.f, t=best_phmm.t, eps=best_phmm.eps, p0=best_phmm.p0)
-        res.code_book = code_book
-        return res
+        return [(cls(f=phmm.f, t=phmm.t, eps=phmm.eps, p0=phmm.p0), logP)
+                for phmm, logP in best]

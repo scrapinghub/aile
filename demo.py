@@ -1,14 +1,17 @@
 import sys
 import heapq
 import codecs
+import itertools
+import bisect
+import collections
 
 import pandas as pd
 import numpy as np
 import scipy.spatial.distance as dst
 import scrapely.htmlpage as hp
 
-from phmm import ProfileHMM
-import util
+from aile.phmm import ProfileHMM
+import aile.util as util
 
 def phmm_cmp(W, Z1, Z2):
     return ((Z1 >= W) != (Z2 >= W)).mean()
@@ -35,90 +38,174 @@ def demo1():
     print 'Error finding motifs (% mismatch):', phmm_cmp(phmm.W, Z, z)*100
 
 
-def html_guess_emissions(code_book, W, X, n=1):
-    """Given a sequence X, the code_book used to encode it and the motif
-    width W, guess the initial value of the emission matrix"""
-    s = code_book.code('/>') # integer for the closing tag symbol
-    emissions = []
-    priors = []
-    # candidates start with a non-closing tag and end with a closing one
-    candidates = [i for i in range(len(X) - W) if X[i] != s and X[i + W] == s]
-    for i in util.random_pick(candidates, n):
-        f = util.guess_emissions(code_book, X[i:i+W])
-        f[1, s] = 0.0 # zero probability of starting motif with closing tag
-        f[W, :] = 0.0 # zero probability of ending motif with non-closing tag
-        f[W, s] = 1.0 # probability 1 of ending motif with closing tag
-        emissions.append(util.normalized(f))
-        eps = f[0, :].repeat(W).reshape(f[1:,:].shape)
-        eps[  0, s] = 1e-6
-        eps[W-1, :] = 1e-6
-        eps[W-1, s] = 1.0
-        priors.append(1.0 + 1e-3*util.normalized(eps))
-    return emissions, priors
-
-
-def tagify(page):
+def encode_html(page):
     def convert(fragment):
         if (fragment.is_text_content and
             page.body[fragment.start:fragment.end].strip()):
-            yield ('[T]', fragment)
+            return '[T]'
         elif isinstance(fragment, hp.HtmlTag):
             if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG:
                 tag_class = fragment.attributes.get('class', None)
                 if tag_class:
-                    yield (fragment.tag, fragment)
-                    yield (tag_class, None)
+                    return fragment.tag + '|' + tag_class
                 else:
-                    yield (fragment.tag, fragment)
+                    return fragment.tag
             else:
-                yield ('/>', fragment)
+                return '/>'
         else:
-            yield (None, None)
+            return None
     return filter(lambda x: x[0] is not None,
-                  [x for f in page.parsed_body for x in convert(f)])
+                  [(convert(f), f) for f in page.parsed_body])
 
 
-def match_tags(tags):
-    match = np.repeat(-1, len(tags))
+def match_fragments(fragments):
+    match = np.repeat(-1, len(fragments))
     stack = []
-    for i, tag in enumerate(tags):
-        if isinstance(tag, hp.HtmlTag):
-            if tag.tag_type == hp.HtmlTagType.OPEN_TAG:
-                stack.append((i, tag))
-            elif (tag.tag_type == hp.HtmlTagType.CLOSE_TAG and
+    for i, fragment in enumerate(fragments):
+        if isinstance(fragment, hp.HtmlTag):
+            if fragment.tag_type == hp.HtmlTagType.OPEN_TAG:
+                stack.append((i, fragment))
+            elif (fragment.tag_type == hp.HtmlTagType.CLOSE_TAG and
                   stack):
                 last_i, last_tag = stack[-1]
                 if (last_tag.tag_type == hp.HtmlTagType.OPEN_TAG and
-                    last_tag.tag == tag.tag):
+                    last_tag.tag == fragment.tag):
                     match[last_i] = i
                     stack.pop()
     return match
 
 
-def extract_motifs(phmm, tags, fragments, m=0.2, G=0.3):
-    X = np.array(map(phmm.code_book.code, tags))
-    Z, logP = phmm.viterbi(X)
-    match = match_tags(fragments)
+def extract_subtrees(fragments, w_min, w_max):
+    match = match_fragments(fragments)
     i = 0
     while i < len(match):
         j = match[i]
         if j > 0:
             k = j
-            while k - i <= phmm.W*(1.0 + m):
-                if k - i >= phmm.W*(1.0 - m):
-                    H = np.sum(
-                            np.abs(np.bincount(Z[i:k], minlength=phmm.S)[phmm.W:] - 1)
-                        )/float(phmm.W)
-                    if H <= G:
-                        score = phmm.score(X[i:k], Z[i:k])/(k - i)
-                        yield (i, k), Z[i:k], score, H
-                        i = k
-                        break
+            while k - i <= w_max:
+                if k - i >= w_min:
+                    yield (i, k)
                 k = match[k + 1]
                 if k < j:
                     break
         i += 1
 
+
+def extract_motifs(phmm, X, fragments, m=0.2, G=0.3):
+    Z, logP = phmm.viterbi(X)
+    k = 0
+    for i, j in extract_subtrees(fragments, phmm.W*(1.0 - m), phmm.W*(1.0 + m)):
+        if i > k:
+            H = np.sum(
+                    np.abs(np.bincount(Z[i:j], minlength=phmm.S)[phmm.W:] - 1)
+                )/float(phmm.W)
+            if H <= G:
+                score = phmm.score(X[i:j], Z[i:j])/(j - i)
+                yield (i, j), Z[i:j], score, H
+                k = j
+
+
+class PageSequence(object):
+    def __init__(self, pages):
+        self.pages = pages
+        self.body_lengths = []
+        self.tags_lengths = []
+        self.tags = []
+        self.fragments = []
+        l1 = 0
+        l2 = 0
+        for page in pages:
+            tags, fragments = zip(*encode_html(page))
+            self.tags += tags
+            self.fragments += fragments
+            l1 += len(page.body)
+            l2 += len(tags)
+            self.body_lengths.append(l1)
+            self.tags_lengths.append(l2)
+        self.body = ''.join(page.body for page in pages)
+
+    def index_tag(self, i):
+        return bisect.bisect(self.tags_lengths, i)
+
+    def offset(self, fragment_idx):
+        p = self.index_tag(fragment_idx)
+        if p > 0:
+            off = self.body_lengths[p - 1]
+        else:
+            off = 0
+        return off
+
+    def body_segment(self, fragment_idx_1, fragment_idx_2 = None):
+        off1 = self.offset(fragment_idx_1)
+        fragment1 = self.fragments[fragment_idx_1]
+        if fragment_idx_2 is None:
+            return self.body[off1 + fragment1.start:off1 + fragment1.end]
+        else:
+            off2 = self.offset(fragment_idx_2)
+            fragment2 = self.fragments[fragment_idx_2]
+            return self.body[off1 + fragment1.start:off2 + fragment2.end]
+
+
+def fit_model(page_sequence):
+    code_book = util.CodeBook(page_sequence.tags)
+    X = np.array(map(code_book.code, page_sequence.tags))
+    W = guess_motif_width(X, n_estimates=2)
+
+    def html_guess_emissions(W, n_seeds):
+        seeds = []
+        w = W
+        while (len(seeds) < n_seeds):
+            seeds += [X[i:i+W]
+                      for i, j in extract_subtrees(page_sequence.fragments, w, w)]
+            w += 1
+            if (w - W > 10):
+                break
+        if seeds:
+            seeds = itertools.islice(itertools.cycle(seeds), n_seeds)
+        else:
+            seeds = [X[i:i+W] for i in
+                     util.random_pick(range(len(X) - W - 1), n_seeds)]
+        s = code_book.code('/>') # integer for the closing tag symbol
+        emissions = []
+        priors = []
+        for seed in seeds:
+            f = util.guess_emissions(code_book.frequencies, seed)
+            f[1, s] = 0.0 # zero probability of starting motif with closing tag
+            f[W, :] = 0.0 # zero probability of ending motif with non-closing tag
+            f[W, s] = 1.0 # probability 1 of ending motif with closing tag
+            f = util.normalized(f)
+            eps = f[0, :].repeat(W).reshape(f[1:,:].shape)
+            eps[  0, s] = 1e-6
+            eps[W-1, :] = 1e-6
+            eps[W-1, s] = 1.0
+            emissions.append(f)
+            priors.append(1.0 + 1e-3*util.normalized(eps))
+        return emissions, priors
+
+    models = ProfileHMM.fit(
+        X,
+        W,
+        guess_emissions=html_guess_emissions,
+        precision=1e-6)
+
+    res = []
+    for model, logP in models:
+        motifs = list(extract_motifs(model, X, page_sequence.fragments))
+        for (i, j), Z, score, H in motifs:
+            print 80*'-'
+            print page_sequence.body_segment(i, j)
+
+        model = adjust(model, motifs)
+        fields = itemize(model, code_book)
+        items = extract_items(page_sequence, motifs, fields)
+        empty = uninformative_fields(items)
+        fields = [f for f in fields if f not in empty]
+        items = pd.concat(
+            [items[f] for f in fields],
+            axis=1,
+            keys=fields)
+        res.append((model, logP, fields, motifs, items))
+    return res
 
 def adjust(phmm, matches):
     r = np.zeros((phmm.W, ), dtype=int)
@@ -136,12 +223,16 @@ def adjust(phmm, matches):
         t   = phmm.t,
         eps = phmm.eps,
         p0  = phmm.p0)
-    phmm2.code_book = phmm.code_book
     return phmm2
 
 
-def itemize(phmm, ratio=2.0, tags=['[T]', 'a', 'img']):
-    a = map(phmm.code_book.code, tags)
+def itemize(phmm, code_book, ratio=2.0, tags=['[T]', 'a', 'img']):
+    a = []
+    for i, letter in enumerate(code_book.letters):
+        for tag in tags:
+            if letter == tag or letter.startswith(tag + '|'):
+                a.append(i)
+                break
     h = phmm.f[0,a]
     return [phmm.W + j for j, g in enumerate(phmm.f[1:])
             if np.any(g[a]/h >= ratio)]
@@ -154,30 +245,58 @@ def guess_motif_width(X, n_estimates=2, min_width=10, max_width=400):
             for d, w in heapq.nsmallest(n_estimates, D, key=lambda x: x[0])]
 
 
-def extract_items(page, fragments, motifs, fields):
+def index_fields(fields):
+    N = len(fields)
+    return [np.repeat(fields, 3),
+            np.tile(['name', 'type', 'content'], N)]
+
+
+def extract_items(page_sequence, motifs, fields):
     items = []
     for (i, j), Z, score, H in motifs:
         f = {}
         for k, z in enumerate(Z):
             if z in fields:
-                fragment = fragments[i + k]
+                fragment = page_sequence.fragments[i + k]
                 if fragment is not None:
                     if fragment.is_text_content:
-                        f[z] = page.body[fragment.start:fragment.end]
+                        txt = page_sequence.body_segment(i + k)
+                        if txt.strip():
+                            f[z] = (None, 'txt', txt)
                     elif (isinstance(fragment, hp.HtmlTag) and
                           fragment.tag_type != hp.HtmlTagType.CLOSE_TAG):
+                        name = fragment.attributes.get('class', None)
                         if fragment.tag == 'a':
-                            f[z] = fragment.attributes.get('href', None)
+                            f[z] = (name, 'lnk', fragment.attributes.get('href', None))
                         if fragment.tag == 'img':
-                            f[z] = fragment.attributes.get('src', None)
-        items.append([f.get(field, None) for field in fields])
-    return pd.DataFrame.from_records(items)
+                            f[z] = (name, 'img', fragment.attributes.get('src', None))
+        items.append([x for field in fields
+                        for x in f.get(field, (None, None, None))])
+    return pd.DataFrame.from_records(
+        items,
+        columns=index_fields(fields))
+
+
+def biggest_group(series):
+    s = series[series.notnull()]
+    if len(s) == 0:
+        return (0, None)
+    return max(((v, k)
+                for k, v in collections.Counter(s).iteritems()),
+               key=lambda x: x[0])
+
+def items_score(items):
+    s = 0
+    for col in items.columns.levels[0]:
+        s += biggest_group(items[col]['name'])[0]
+        s += biggest_group(items[col]['type'])[0]
+    return float(s)
 
 
 def uninformative_fields(items):
-    return [col
-            for col in items.columns
-            if (items[col][0] == items[col]).all()]
+    return {col
+            for col in items.columns.levels[0]
+            if items[col]['content'].isnull().all()}
 
 
 def train_test(pattern, start, end):
@@ -189,7 +308,7 @@ def train_test_1(n_train=2):
     return train_test('https://news.ycombinator.com/news?p={0}', 1, n_train + 1)
 
 
-def train_test_2(n_train=12):
+def train_test_2(n_train=1):
     return train_test('https://patchofland.com/investments/page/{0}.html', 1, n_train + 1)
 
 
@@ -211,40 +330,14 @@ def train_test_6(n_train=3):
     return train_test('http://arstechnica.com/page/{0}/', 1, n_train + 1)
 
 
-def demo2(train_test, out='demo.html'):
+def demo2(train_test, out='demo'):
     train_urls, test_url = train_test
-
-    print 'Downloading and parsing test urls... ',
-    tags_1, fragments_1 = zip(*[
-        (tag, fragment)
-        for url in train_urls
-        for tag, fragment in tagify(hp.url_to_page(url))
-    ])
-    print 'done'
-    X_train = np.array(tags_1)
-    W = guess_motif_width(X_train, n_estimates=2)
-    print 'Motif width guess:', W
-    phmm = ProfileHMM.fit(
-        X_train,
-        W,
-        guess_emissions=html_guess_emissions,
-        precision=1e-3)
-    print 'Motif width      :', phmm.W
-    train_motifs = extract_motifs(phmm, tags_1, fragments_1)
-    phmm = adjust(phmm, train_motifs)
-    fields = itemize(phmm)
-
-    page = hp.url_to_page(test_url)
-    tags_2, fragments_2 = zip(*tagify(page))
-
-    motifs = extract_motifs(phmm, tags_2, fragments_2)
-    items = extract_items(page, fragments_2, motifs, fields)
-
-    outf = codecs.open(out, 'w', encoding='utf-8')
-    items.to_html(outf)
-    print items
-
-    return phmm
+    train = PageSequence([hp.url_to_page(url) for url in train_urls])
+    for model, logP, fields, motifs, items in fit_model(train):
+        outf = codecs.open(
+            '{0}-{1}.html'.format(out, model.W), 'w', encoding='utf-8')
+        items.to_html(outf)
+        print model.W, logP, items_score(items)
 
 
 if __name__ == '__main__':
