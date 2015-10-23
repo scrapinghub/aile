@@ -13,6 +13,7 @@ import scrapely.htmlpage as hp
 from aile.phmm import ProfileHMM
 import aile.util as util
 
+
 def phmm_cmp(W, Z1, Z2):
     return ((Z1 >= W) != (Z2 >= W)).mean()
 
@@ -24,7 +25,7 @@ def demo1():
             [0.9, 0.1, 0.0, 0.0],
             [0.2, 0.8, 0.0, 0.0],
             [0.0, 0.0, 0.8, 0.2]]),
-        t = np.array([
+        t=np.array([
             0.05, 0.9, 0.1, 0.05, 0.85, 0.1])
     )
 
@@ -38,12 +39,33 @@ def demo1():
     print 'Error finding motifs (% mismatch):', phmm_cmp(phmm.W, Z, z)*100
 
 
+def join_text(tags_fragments):
+    f = None
+    for tag, fragment in tags_fragments:
+        if tag != '[T]':
+            if f is not None:
+                yield '[T]', f
+                f = None
+            yield tag, fragment
+        else:
+            if f is None:
+                f = fragment
+            else:
+                f.end = fragment.end
+    if f is not None:
+        yield '[T]', f
+
+
 def encode_html(page):
+    ignore_tags = {'b', 'br', 'em',
+                   'i', 'small', 'strong', 'sub', 'sup', 'wbr'}
     def convert(fragment):
         if (fragment.is_text_content and
             page.body[fragment.start:fragment.end].strip()):
             return '[T]'
         elif isinstance(fragment, hp.HtmlTag):
+            if fragment.tag in ignore_tags:
+                return None
             if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG:
                 tag_class = fragment.attributes.get('class', None)
                 if tag_class:
@@ -54,8 +76,10 @@ def encode_html(page):
                 return '/>'
         else:
             return None
-    return filter(lambda x: x[0] is not None,
-                  [(convert(f), f) for f in page.parsed_body])
+    return list(
+        join_text(
+            filter(lambda x: x[0] is not None,
+                   [(convert(f), f) for f in page.parsed_body])))
 
 
 def match_fragments(fragments):
@@ -91,10 +115,10 @@ def extract_subtrees(fragments, w_min, w_max):
         i += 1
 
 
-def extract_motifs(phmm, X, fragments, m=0.2, G=0.3):
+def extract_motifs(phmm, X, subtrees, G=0.3):
     Z, logP = phmm.viterbi(X)
     k = 0
-    for i, j in extract_subtrees(fragments, phmm.W*(1.0 - m), phmm.W*(1.0 + m)):
+    for i, j in subtrees:
         if i > k:
             H = np.sum(
                     np.abs(np.bincount(Z[i:j], minlength=phmm.S)[phmm.W:] - 1)
@@ -123,6 +147,7 @@ class PageSequence(object):
             self.body_lengths.append(l1)
             self.tags_lengths.append(l2)
         self.body = ''.join(page.body for page in pages)
+        self.code_book = util.CodeBook(self.tags)
 
     def index_tag(self, i):
         return bisect.bisect(self.tags_lengths, i)
@@ -135,7 +160,7 @@ class PageSequence(object):
             off = 0
         return off
 
-    def body_segment(self, fragment_idx_1, fragment_idx_2 = None):
+    def body_segment(self, fragment_idx_1, fragment_idx_2=None):
         off1 = self.offset(fragment_idx_1)
         fragment1 = self.fragments[fragment_idx_1]
         if fragment_idx_2 is None:
@@ -147,8 +172,7 @@ class PageSequence(object):
 
 
 def fit_model(page_sequence):
-    code_book = util.CodeBook(page_sequence.tags)
-    X = np.array(map(code_book.code, page_sequence.tags))
+    X = np.array(map(page_sequence.code_book.code, page_sequence.tags))
     W = guess_motif_width(X, n_estimates=2)
 
     def html_guess_emissions(W, n_seeds):
@@ -165,11 +189,11 @@ def fit_model(page_sequence):
         else:
             seeds = [X[i:i+W] for i in
                      util.random_pick(range(len(X) - W - 1), n_seeds)]
-        s = code_book.code('/>') # integer for the closing tag symbol
+        s = page_sequence.code_book.code('/>') # integer for the closing tag symbol
         emissions = []
         priors = []
         for seed in seeds:
-            f = util.guess_emissions(code_book.frequencies, seed)
+            f = util.guess_emissions(page_sequence.code_book.frequencies, seed)
             f[1, s] = 0.0 # zero probability of starting motif with closing tag
             f[W, :] = 0.0 # zero probability of ending motif with non-closing tag
             f[W, s] = 1.0 # probability 1 of ending motif with closing tag
@@ -186,17 +210,16 @@ def fit_model(page_sequence):
         X,
         W,
         guess_emissions=html_guess_emissions,
-        precision=1e-6)
+        precision=1e-3)
 
     res = []
     for model, logP in models:
-        motifs = list(extract_motifs(model, X, page_sequence.fragments))
-        for (i, j), Z, score, H in motifs:
-            print 80*'-'
-            print page_sequence.body_segment(i, j)
-
-        #model = adjust(model, motifs)
-        fields = itemize(model, code_book)
+        subtrees = list(extract_subtrees(page_sequence.fragments, int(model.W*0.8), int(model.W*1.2)))
+        motifs = list(extract_motifs(model, X, subtrees))
+        model = adjust(model, motifs)
+        model.fit_em_n(X, 3)
+        motifs = list(extract_motifs(model, X, subtrees))
+        fields = itemize(model, page_sequence.code_book)
         items = extract_items(page_sequence, motifs, fields)
         empty = uninformative_fields(items)
         fields = [f for f in fields if f not in empty]
@@ -207,9 +230,9 @@ def fit_model(page_sequence):
         res.append((model, logP, fields, motifs, items))
     return res
 
-def adjust(phmm, matches):
+def adjust(phmm, motifs):
     r = np.zeros((phmm.W, ), dtype=int)
-    for (i, j), Z, score, H in matches:
+    for (i, j), Z, score, H in motifs:
         for k, z in enumerate(Z):
             if z >= phmm.W:
                 r[z - phmm.W] += 1
@@ -285,14 +308,17 @@ def biggest_group(series):
                 for k, v in collections.Counter(s).iteritems()),
                key=lambda x: x[0])
 
+
 def items_score(items):
     S = 0
+    C = 0
     n = 0
     for col in items.columns.levels[0]:
         S += entropy_categorical(items[col]['name'])
         S += entropy_categorical(items[col]['type'])
+        C += items[col]['content'].notnull().sum()
         n += 2
-    return S/float(n)
+    return S/float(n), C
 
 
 def uninformative_fields(items):
@@ -342,12 +368,13 @@ def train_test_6(n_train=3):
 def demo2(train_test, out='demo'):
     train_urls, test_url = train_test
     train = PageSequence([hp.url_to_page(url) for url in train_urls])
-    for model, logP, fields, motifs, items in fit_model(train):
+    models = fit_model(train)
+    for model, logP, fields, motifs, items in models:
         outf = codecs.open(
             '{0}-{1}.html'.format(out, model.W), 'w', encoding='utf-8')
         items.to_html(outf)
         print model.W, logP, items_score(items), model.motif_entropy
-
+    return train, models
 
 if __name__ == '__main__':
     tests = [
@@ -359,4 +386,5 @@ if __name__ == '__main__':
         train_test_6
     ]
 
-    phmm = demo2(tests[int(sys.argv[1])-1]())
+    n_test = int(sys.argv[1])
+    phmm = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))

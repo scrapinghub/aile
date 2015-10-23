@@ -305,13 +305,13 @@ class ProfileHMM(hmm.FixedHMM):
                          unsigned int w=3):
         return forward_backward(X, self.pZ, self.pE, self.pT, w)
 
-    def fit_em_1(self, np.ndarray[np.int_t, ndim=1] sequence):
+    def fit_em_1(self, np.ndarray[np.int_t, ndim=1] sequence, unsigned int w=3):
         """Run a single iteration of the EM method.
 
         Improves the current f and t parameters and returns logP (the logarithm
         of the probability of the parameters given the data)
         """
-        fb = self.forward_backward(sequence)
+        fb = self.forward_backward(sequence, w)
         # Take into account the priors on the parameters (Dirichlet prior)
         fb.logP += np.sum((self.eps - 1)*util.safe_log(self.f[1:,:]))
 
@@ -401,33 +401,33 @@ class ProfileHMM(hmm.FixedHMM):
 
         return fb.logP
 
-    def fit_em_n(self, sequence, n=1):
+    def fit_em_n(self, sequence, n=1, w=3):
         """Iterate the EM algorithm 'n' times"""
         for n in range(n):
-            logP = self.fit_em_1(sequence)
+            logP = self.fit_em_1(sequence, w)
         return logP
 
     def fit_em(self,
                np.ndarray[np.int_t, ndim=1] sequence,
                double precision=1e-3,
-               unsigned int max_iter=100):
+               unsigned int max_iter=100,
+               unsigned int w=3):
         """Iterate the EM algorithm until we get the desired precision"""
         logP0 = None
         it = 0
         while True:
-            logP1 = self.fit_em_1(sequence)
+            logP1 = self.fit_em_1(sequence, w)
             # Check convergence
             if logP0:
                 err = (logP0 - logP1)/logP0
                 if err < 0:
-                    # TODO
-                    break
+                    w *= 2
+                    continue
                 if err < precision:
                     break
             logP0 = logP1
             it += 1
             if it > max_iter:
-                # TODO
                 break
         return logP1
 
