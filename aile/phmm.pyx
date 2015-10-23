@@ -295,6 +295,10 @@ class ProfileHMM(hmm.FixedHMM):
         self._f = value
         self.set_pE(self.calc_pE(value))
 
+    @property
+    def motif_entropy(self):
+        return -np.sum(self.f[1:,:]*np.log(self.f[1:,:]))
+
     # Wrapper around the cdef function
     def forward_backward(self,
                          np.ndarray[np.int_t, ndim=1] X,

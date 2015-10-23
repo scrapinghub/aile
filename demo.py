@@ -195,7 +195,7 @@ def fit_model(page_sequence):
             print 80*'-'
             print page_sequence.body_segment(i, j)
 
-        model = adjust(model, motifs)
+        #model = adjust(model, motifs)
         fields = itemize(model, code_book)
         items = extract_items(page_sequence, motifs, fields)
         empty = uninformative_fields(items)
@@ -286,17 +286,26 @@ def biggest_group(series):
                key=lambda x: x[0])
 
 def items_score(items):
-    s = 0
+    S = 0
+    n = 0
     for col in items.columns.levels[0]:
-        s += biggest_group(items[col]['name'])[0]
-        s += biggest_group(items[col]['type'])[0]
-    return float(s)
+        S += entropy_categorical(items[col]['name'])
+        S += entropy_categorical(items[col]['type'])
+        n += 2
+    return S/float(n)
 
 
 def uninformative_fields(items):
     return {col
             for col in items.columns.levels[0]
             if items[col]['content'].isnull().all()}
+
+
+def entropy_categorical(X):
+    _, c = np.unique(X, return_counts=True)
+    t = np.sum(c)
+    p = c.astype(float)/float(t)
+    return -np.sum(p*np.log(p))
 
 
 def train_test(pattern, start, end):
@@ -337,7 +346,7 @@ def demo2(train_test, out='demo'):
         outf = codecs.open(
             '{0}-{1}.html'.format(out, model.W), 'w', encoding='utf-8')
         items.to_html(outf)
-        print model.W, logP, items_score(items)
+        print model.W, logP, items_score(items), model.motif_entropy
 
 
 if __name__ == '__main__':
