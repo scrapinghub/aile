@@ -262,19 +262,27 @@ class ProfileHMM(hmm.FixedHMM):
 
     def calc_pT(self, t):
         """Compute the transition matrix given the parameters 't'"""
-        b_in, b_out, d, mb, m, md = t
+        (b_in, b_out), tM = t
+        d  = tM[0,:]
+        mb = tM[1,:]
+        m  = tM[2,:]
+        md = tM[3,:]
         pT = np.zeros((2*self.W, 2*self.W))
-        F = md*(d**np.arange(self.W))*(1-d)/(1 - d**self.W)
-        F[self.W - 1] += m
+        F = np.zeros((self.W, self.W))
+        for j in range(self.W):
+            F[j, 0] = md[j]*(1.0 - d[j])/(1.0 - d[j]**self.W)
+            for l in range(1, self.W):
+                F[j, l] = d[j]*F[j, l - 1]
+            F[j, self.W - 1] += m[j]
         pT[0,      0] = b_out
         pT[0, self.W] = 1 - b_out
         for j in range(1, self.W):
             pT[j, j         ] = b_in     # b[j] -> b[j]
             pT[j, self.W + j] = 1 - b_in # b[j] -> m[j]
         for j in range(self.W):
-            pT[self.W + j, (j + 1) % self.W] = mb    # m[j] -> b[j + 1]
+            pT[self.W + j, (j + 1) % self.W] = mb[j]    # m[j] -> b[j + 1]
             for k in range(self.W):
-                pT[self.W + j, self.W + k] = F[(k - j - 2) % self.W]
+                pT[self.W + j, self.W + k] = F[j, (k - j - 2) % self.W]
         return pT
 
     @property
@@ -346,7 +354,8 @@ class ProfileHMM(hmm.FixedHMM):
 
         # objective function for parameters
         def EM2(np.ndarray[np.double_t, ndim=1] tM,
-                np.ndarray[np.double_t, ndim=2] xi):
+                np.ndarray[np.double_t, ndim=2] xi,
+                unsigned int j):
             cdef double d  = tM[0]
             cdef double mb = tM[1]
             cdef double m  = tM[2]
@@ -368,36 +377,41 @@ class ProfileHMM(hmm.FixedHMM):
             )
             F[W - 1] = np.logaddexp(F[W - 1], np.log(m))
 
-            r = 0
-            for j in range(W):
-                r -= xi[W + j, (j + 1) % W]*np.log(mb)
-                for k in range(W):
-                    r -= xi[W + j, W + k]*F[(k - j - 2) % W]
-
+            r = -xi[W + j, (j + 1) % W]*np.log(mb)
+            for k in range(W):
+                r -= xi[W + j, W + k]*F[(k - j - 2) % W]
             return r
 
         # Equality constraint for tM parameters
         def gm(np.ndarray[np.double_t, ndim=1] tM,
-               np.ndarray[np.double_t, ndim=2] xi):
+               np.ndarray[np.double_t, ndim=2] xi,
+               unsigned int j):
             cdef double mb = tM[1]
             cdef double m  = tM[2]
             cdef double md = tM[3]
 
             return (mb + m + md) - 1.0
 
-        d, mb, m, md = opt.fmin_slsqp(
-            func        = EM2,
-            x0          = self.t[2:].copy(),
-            bounds      = 4*[(1e-3, 1.0 - 1e-3)],
-            eqcons      = [gm],
-            iprint      = 0,
-            args        = (xi/n, ),
-            epsilon     = 1e-6,
-            acc         = 1e-9
-        )
+        d  = np.zeros((self.W,))
+        mb = np.zeros((self.W,))
+        m  = np.zeros((self.W,))
+        md = np.zeros((self.W,))
+        for j in range(self.W):
+            d[j], mb[j], m[j], md[j] =\
+              opt.fmin_slsqp(
+                  func        = EM2,
+                  x0          = self.t[1][:, j].copy(),
+                  bounds      = 4*[(1e-3, 1.0 - 1e-3)],
+                  eqcons      = [gm],
+                  iprint      = 0,
+                  args        = (xi/n, j),
+                  epsilon     = 1e-6,
+                  acc         = 1e-9
+                )
+        tM = np.vstack((d, mb, m, md))
 
         self.f = f
-        self.t = np.array([b_in, b_out, d, mb, m, md])
+        self.t = (b_in, b_out), tM
 
         return fb.logP
 
@@ -421,8 +435,8 @@ class ProfileHMM(hmm.FixedHMM):
             if logP0:
                 err = (logP0 - logP1)/logP0
                 if err < 0:
-                    w *= 2
-                    continue
+                    print 'dec logP', logP1, logP0
+                    break
                 if err < precision:
                     break
             logP0 = logP1
@@ -451,11 +465,14 @@ class ProfileHMM(hmm.FixedHMM):
             f0, eps = guess_emissions(W, n_seeds)
 
         def gen_random_t0(b_out, d):
-            t = np.random.rand(6)
-            t[1] = b_out
-            t[2] = d
-            t[3:] /= t[2:].sum()
-            return t
+            b_in = np.random.rand(1)
+            tM = np.random.rand(4, W)
+            tM[ 0, :] *= 0.1*d
+            tM[ 1, :] *= 0.1
+            tM[ 2, :] += 0.8
+            tM[ 3, :] *= 0.1
+            tM[1:, :] /= tM[1:, :].sum(axis=0)
+            return (b_in, b_out), tM
         t0 = [gen_random_t0(b_out, d) for b_out in rB for d in rD]
         p0 = [np.repeat(1.0/(2*W), 2*W) for b_out in rB for d in rD]
 

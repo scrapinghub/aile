@@ -217,7 +217,6 @@ def fit_model(page_sequence):
         subtrees = list(extract_subtrees(page_sequence.fragments, int(model.W*0.8), int(model.W*1.2)))
         motifs = list(extract_motifs(model, X, subtrees))
         model = adjust(model, motifs)
-        model.fit_em_n(X, 3)
         motifs = list(extract_motifs(model, X, subtrees))
         fields = itemize(model, page_sequence.code_book)
         items = extract_items(page_sequence, motifs, fields)
@@ -387,4 +386,4 @@ if __name__ == '__main__':
     ]
 
     n_test = int(sys.argv[1])
-    phmm = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))
+    train, phmm = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))
