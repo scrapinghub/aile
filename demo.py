@@ -264,8 +264,7 @@ def itemize(phmm, code_book, ratio=2.0, tags=['[T]', 'a', 'img']):
 def guess_motif_width(X, n_estimates=2, min_width=10, max_width=400):
     D = [(dst.hamming(X[:-w], X[w:]), w)
          for w in np.arange(min_width, max_width)]
-    return [min_width + w
-            for d, w in heapq.nsmallest(n_estimates, D, key=lambda x: x[0])]
+    return [w for d, w in heapq.nsmallest(n_estimates, D, key=lambda x: x[0])]
 
 
 def index_fields(fields):
