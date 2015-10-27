@@ -421,9 +421,8 @@ class ProfileHMM(hmm.FixedHMM):
             if logP0:
                 err = (logP0 - logP1)/logP0
                 if err < 0:
-                    w *= 2
-                    continue
-                if err < precision:
+                    pass # TODO
+                if np.abs(err) < precision:
                     break
             logP0 = logP1
             it += 1

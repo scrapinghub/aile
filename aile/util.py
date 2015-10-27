@@ -48,7 +48,7 @@ def random_pick(x, n=1):
 
 
 def guess_emissions(freqs, X, gamma=0.1):
-    """Given a sequence X guess the initial value of the emission matrix used 
+    """Given a sequence X guess the initial value of the emission matrix used
     in MEME and ProfileHMM"""
     A = len(freqs)
     W = len(X)
@@ -127,30 +127,30 @@ class CodeBook(object):
     """
     def __init__(self, sequence):
         self.counter = collections.Counter(sequence)
-        self.letters = sorted(set(self.counter))
+        self.symbols = sorted(set(self.counter))
         self._index = {
-            letter: index
-            for index, letter in enumerate(self.letters)
+            symbol: index
+            for index, symbol in enumerate(self.symbols)
         }
         self.total_count = sum(self.counter.values())
         self.frequencies = np.array(
-            [self.counter[letter] for letter in self.letters] + [1],
+            [self.counter[symbol] for symbol in self.symbols] + [1],
             dtype=float
         )
         self.frequencies /= float(self.total_count)
 
     def __len__(self):
         """Number of symbols"""
-        return len(self.letters) + 1
+        return len(self.symbols) + 1
 
-    def code(self, letter):
-        """Convert letter to integer"""
-        return self._index.get(letter, len(self.letters))
+    def code(self, symbol):
+        """Convert symbol to integer"""
+        return self._index.get(symbol, len(self.symbols))
 
     def decode(self, index):
         """Perform the inverse operation of code"""
-        N = len(self.letters)
+        N = len(self.symbols)
         if index >= 0 and index < N:
-            return self.letters[index]
+            return self.symbols[index]
         else:
             return None

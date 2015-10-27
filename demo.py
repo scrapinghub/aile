@@ -1,9 +1,11 @@
+import os
 import sys
 import heapq
 import codecs
 import itertools
 import bisect
 import collections
+import urllib
 
 import pandas as pd
 import numpy as np
@@ -39,43 +41,62 @@ def demo1():
     print 'Error finding motifs (% mismatch):', phmm_cmp(phmm.W, Z, z)*100
 
 
-def join_text(tags_fragments):
+PageSymbol = collections.namedtuple(
+    'PageSymbol',
+    ['closed', 'class_attr', 'tag']
+)
+
+
+def join_text(symbols_fragments):
+    """If two or more text symbols are adjacent join them in a single one"""
+    s = None
     f = None
-    for tag, fragment in tags_fragments:
-        if tag != '[T]':
+    for symbol, fragment in symbols_fragments:
+        if symbol.tag != 'text':
             if f is not None:
-                yield '[T]', f
+                yield s, f
+                s = None
                 f = None
-            yield tag, fragment
+            yield symbol, fragment
         else:
             if f is None:
                 f = fragment
+                s = symbol
             else:
                 f.end = fragment.end
     if f is not None:
-        yield '[T]', f
+        yield s, f
 
 
-def encode_html(page):
-    ignore_tags = {'b', 'br', 'em',
-                   'i', 'small', 'strong', 'sub', 'sup', 'wbr'}
+def encode_html(page, ignore_tags='default'):
+    """Given an HtmlPage transform it into a list of PageSymbol.
+
+    Returns a list of tuples: the first element the PageSymbol and the
+    second element the fragment that originated the symbol.
+    """
+    # Ignore stylistic tags
+    if ignore_tags is 'default':
+        ignore_tags = {'b', 'br', 'em',
+                       'i', 'small', 'strong', 'sub', 'sup', 'wbr'}
+    elif ignore_tags is None:
+        ignore_tags = {}
+
     def convert(fragment):
         if (fragment.is_text_content and
             page.body[fragment.start:fragment.end].strip()):
-            return '[T]'
+            return PageSymbol(False, None, 'text')
         elif isinstance(fragment, hp.HtmlTag):
             if fragment.tag in ignore_tags:
                 return None
             if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG:
-                tag_class = fragment.attributes.get('class', None)
-                if tag_class:
-                    return fragment.tag + '|' + tag_class
-                else:
-                    return fragment.tag
+                return PageSymbol(False,
+                                  fragment.attributes.get('class'),
+                                  fragment.tag)
             else:
-                return '/>'
+                return PageSymbol(True, None, None)
         else:
             return None
+
     return list(
         join_text(
             filter(lambda x: x[0] is not None,
@@ -83,6 +104,12 @@ def encode_html(page):
 
 
 def match_fragments(fragments):
+    """Find the closing fragment for every fragment.
+
+    Returns: an array with as many elements as fragments. If the
+    fragment has no closing pair then the array contains -1 at that position
+    otherwise it contains the index of the closing pair.
+    """
     match = np.repeat(-1, len(fragments))
     stack = []
     for i, fragment in enumerate(fragments):
@@ -100,6 +127,8 @@ def match_fragments(fragments):
 
 
 def extract_subtrees(fragments, w_min, w_max):
+    """Extract all segments of web page that are balanced and have a size
+    between w_min and w_max"""
     match = match_fragments(fragments)
     i = 0
     while i < len(match):
@@ -115,22 +144,51 @@ def extract_subtrees(fragments, w_min, w_max):
         i += 1
 
 
-def extract_motifs(phmm, X, subtrees, G=0.3):
-    Z, logP = phmm.viterbi(X)
+Motif = collections.namedtuple('Motif',
+                               ['range', 'states', 'score_1', 'score_2'])
+
+
+def extract_motifs_1(model, X, subtrees, G=0.5):
+    """Filter the subtrees that are motifs according to model"""
+    Z, logP = model.viterbi(X)
     k = 0
     for i, j in subtrees:
         if i > k:
             H = np.sum(
-                    np.abs(np.bincount(Z[i:j], minlength=phmm.S)[phmm.W:] - 1)
-                )/float(phmm.W)
+                    np.abs(np.bincount(Z[i:j], minlength=model.S)[model.W:] - 1)
+                )/float(model.W)
             if H <= G:
-                score = phmm.score(X[i:j], Z[i:j])/(j - i)
-                yield (i, j), Z[i:j], score, H
+                score = model.score(X[i:j], Z[i:j])/(j - i)
+                yield Motif((i, j), Z[i:j], score, H)
                 k = j
+
+
+def extract_motifs_2(model, X, prop=0.7):
+    Z, logP = model.viterbi(X)
+    def motif(i, j):
+        return Motif((i, j), Z[i:j],
+                            model.score(X[i:j], Z[i:j])/(j - i), 0.0)
+    i1 = None
+    i2 = None
+    z2 = None
+    for i, z in enumerate(Z):
+        if z >= model.W:
+            if z2 is None:
+                z2 = z
+                i1 = i
+            elif z <= z2:
+                if (i2 - i1) >= model.W*prop:
+                    yield motif(i1, i2+1)
+                i1 = i
+            i2 = i
+            z2 = z
+    if i1 is not None and (i2 - i1) >= model.W*prop:
+        yield motif(i1, i2+1)
 
 
 class PageSequence(object):
     def __init__(self, pages):
+        """Concatenation of several pages"""
         self.pages = pages
         self.body_lengths = []
         self.tags_lengths = []
@@ -189,21 +247,13 @@ def fit_model(page_sequence):
         else:
             seeds = [X[i:i+W] for i in
                      util.random_pick(range(len(X) - W - 1), n_seeds)]
-        s = page_sequence.code_book.code('/>') # integer for the closing tag symbol
         emissions = []
         priors = []
         for seed in seeds:
             f = util.guess_emissions(page_sequence.code_book.frequencies, seed)
-            f[1, s] = 0.0 # zero probability of starting motif with closing tag
-            f[W, :] = 0.0 # zero probability of ending motif with non-closing tag
-            f[W, s] = 1.0 # probability 1 of ending motif with closing tag
-            f = util.normalized(f)
-            eps = f[0, :].repeat(W).reshape(f[1:,:].shape)
-            eps[  0, s] = 1e-6
-            eps[W-1, :] = 1e-6
-            eps[W-1, s] = 1.0
+            eps = f[0, :]
             emissions.append(f)
-            priors.append(1.0 + 1e-3*util.normalized(eps))
+            priors.append(1.0 + 1e-3*eps)
         return emissions, priors
 
     models = ProfileHMM.fit(
@@ -214,21 +264,31 @@ def fit_model(page_sequence):
 
     res = []
     for model, logP in models:
-        subtrees = list(extract_subtrees(page_sequence.fragments, int(model.W*0.8), int(model.W*1.2)))
-        motifs = list(extract_motifs(model, X, subtrees))
-        model = adjust(model, motifs)
+        f_inc, r_inc = increase_states(model.f)
+        model = ProfileHMM(
+            f=f_inc, t=model.t, p0=np.repeat(model.p0, r_inc), eps=model.eps)
         model.fit_em_n(X, 3)
-        motifs = list(extract_motifs(model, X, subtrees))
+
+        subtrees = list(extract_subtrees(page_sequence.fragments, int(model.W*0.8), int(model.W*1.2)))
+        motifs = list(extract_motifs_1(model, X, subtrees))
+        model = adjust(model, motifs)
+        motifs = list(extract_motifs_2(model, X))
+
         fields = itemize(model, page_sequence.code_book)
-        items = extract_items(page_sequence, motifs, fields)
+        items, scores = extract_items(page_sequence, motifs, fields)
+        valid = scores >= (np.median(scores) - 1.0)
+        items = items.ix[valid]
         empty = uninformative_fields(items)
         fields = [f for f in fields if f not in empty]
+        if not fields:
+            continue
         items = pd.concat(
             [items[f] for f in fields],
             axis=1,
             keys=fields)
         res.append((model, logP, fields, motifs, items))
     return res
+
 
 def adjust(phmm, motifs):
     r = np.zeros((phmm.W, ), dtype=int)
@@ -249,13 +309,30 @@ def adjust(phmm, motifs):
     return phmm2
 
 
-def itemize(phmm, code_book, ratio=2.0, tags=['[T]', 'a', 'img']):
-    a = []
-    for i, letter in enumerate(code_book.letters):
-        for tag in tags:
-            if letter == tag or letter.startswith(tag + '|'):
-                a.append(i)
-                break
+def increase_states(f, max_p=0.1):
+    W = f.shape[0] - 1
+    g = [f[0,:]]
+    r = np.zeros((W,), dtype=int)
+    for j in range(W):
+        h = f[1 + j,:].copy()
+        d = np.flatnonzero(h >= max_p)
+        if len(d) > 1:
+            for p in range(len(d)):
+                for q in range(len(d)):
+                    if q != p:
+                        h[q] = 1e-12
+                g.append(h)
+                r[j] += 1
+        else:
+            g.append(h)
+            r[j] += 1
+    return np.vstack(g), np.tile(r, 2)
+
+
+def itemize(phmm, code_book, ratio=2.0, tags=['text', 'a', 'img']):
+    a = [i
+         for i, symbol in enumerate(code_book.symbols)
+         if symbol.tag in tags]
     h = phmm.f[0,a]
     return [phmm.W + j for j, g in enumerate(phmm.f[1:])
             if np.any(g[a]/h >= ratio)]
@@ -275,6 +352,7 @@ def index_fields(fields):
 
 def extract_items(page_sequence, motifs, fields):
     items = []
+    scores = []
     for (i, j), Z, score, H in motifs:
         f = {}
         for k, z in enumerate(Z):
@@ -294,9 +372,10 @@ def extract_items(page_sequence, motifs, fields):
                             f[z] = (name, 'img', fragment.attributes.get('src', None))
         items.append([x for field in fields
                         for x in f.get(field, (None, None, None))])
+        scores.append(score)
     return pd.DataFrame.from_records(
         items,
-        columns=index_fields(fields))
+        columns=index_fields(fields)), np.array(scores)
 
 
 def biggest_group(series):
@@ -317,13 +396,16 @@ def items_score(items):
         S += entropy_categorical(items[col]['type'])
         C += items[col]['content'].notnull().sum()
         n += 2
-    return S/float(n), C
+    return S/float(n), 3.0*float(C)/(items.shape[0]*items.shape[1])
 
 
 def uninformative_fields(items):
+    def null_proportion(s):
+        return (float(s.isnull().sum())/
+                float(len(s)))
     return {col
             for col in items.columns.levels[0]
-            if items[col]['content'].isnull().all()}
+            if null_proportion(items[col]['content'])>=0.95}
 
 
 def entropy_categorical(X):
@@ -339,33 +421,55 @@ def train_test(pattern, start, end):
 
 
 def train_test_1(n_train=2):
-    return train_test('https://news.ycombinator.com/news?p={0}', 1, n_train + 1)
+    return ('hn',
+            train_test('https://news.ycombinator.com/news?p={0}', 1, n_train + 1))
 
 
 def train_test_2(n_train=1):
-    return train_test('https://patchofland.com/investments/page/{0}.html', 1, n_train + 1)
+    return ('patchofland',
+            train_test('https://patchofland.com/investments/page/{0}.html', 1, n_train + 1))
 
 
 def train_test_3(n_train=6):
-    return train_test('http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}', 1, n_train + 1)
+    return ('ebay',
+            train_test('http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}', 1, n_train + 1))
 
 
 def train_test_4(n_train=6):
-    return train_test('http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F', 1, n_train + 1)
+    return ('monster',
+            train_test('http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F', 1, n_train + 1))
 
 
 def train_test_5(n_train=3):
     pattern = 'http://lambda-the-ultimate.org/node?from={0}'
-    return ([pattern.format(i) for i in range(0, n_train*10, 10)],
-            pattern.format(n_train*10))
+    return ('lambda', ([pattern.format(i) for i in range(0, n_train*10, 10)],
+                       pattern.format(n_train*10)))
 
 
 def train_test_6(n_train=3):
-    return train_test('http://arstechnica.com/page/{0}/', 1, n_train + 1)
+    return ('arstechnica',
+            train_test('http://arstechnica.com/page/{0}/', 1, n_train + 1))
+
+
+def download(train_test):
+    root, (train, test) = train_test
+    train_download = ['{0}-{1}.html'.format(root, i) for i in range(len(train))]
+    for url, local in zip(train, train_download):
+        if not os.path.exists(local):
+            urllib.urlretrieve(url, local)
+    test_download = '{0}-{1}.html'.format(root, len(train) + 1)
+    if not os.path.exists(test_download):
+        urllib.urlretrieve(test, test_download)
+    return (map(make_local_url, train_download),
+            make_local_url(test_download))
+
+
+def make_local_url(path):
+    return 'file:///' + os.path.abspath(path)
 
 
 def demo2(train_test, out='demo'):
-    train_urls, test_url = train_test
+    train_urls, test_url = download(train_test)
     train = PageSequence([hp.url_to_page(url) for url in train_urls])
     models = fit_model(train)
     for model, logP, fields, motifs, items in models:
@@ -386,4 +490,4 @@ if __name__ == '__main__':
     ]
 
     n_test = int(sys.argv[1])
-    phmm = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))
+    train, phmm = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))
