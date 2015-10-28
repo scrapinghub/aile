@@ -1,10 +1,11 @@
 import numpy as np
 
-import phmm
-import util
+import aile.phmm as phmm
+import aile.util as util
+
 
 def test_phmm_1():
-    W = 3    
+    W = 3
     A = 4
     f1 = util.normalized(np.random.rand(W+1, A))
     t1 = np.random.rand(6)
@@ -26,6 +27,7 @@ def test_phmm_1():
     print H2.t
     print H1.f
     print H1.t
+
 
 if __name__ == '__main__':
     test_phmm_1()

@@ -1,6 +1,6 @@
 import numpy as np
 
-import util
+import aile.util as util
 
 
 def test_categorical():
@@ -10,3 +10,7 @@ def test_categorical():
     f = np.bincount(X).astype(float)
     f /= f.sum()
     assert util.eq_delta(f, p, 1e-2)
+
+
+if __name__ == '__main__':
+    test_categorical()

@@ -4,8 +4,8 @@ import time
 import numpy as np
 import pomegranate
 
-import hmm
-import util
+import aile.hmm as hmm
+import aile.util as util
 
 
 def test_hmm_1():
@@ -150,6 +150,7 @@ def test_hmm_3():
         H.forward_backward(X)
         t2 = time.clock()
         print '    {0:2d}/{1:2d} FB: {2:.5f}s'.format(i + 1, N, t2 - t1)
+
 
 if __name__ == '__main__':
     test_hmm_1()
