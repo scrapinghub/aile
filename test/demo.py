@@ -97,6 +97,26 @@ def annotate(fit_result, page_sequence, out_path="annotated.html"):
         out.write("""
 <!DOCTYPE html>
 <html lang="en-US">
+<head>
+<style>
+    pre {
+      counter-reset: code;
+      padding-left: 30px;
+    }
+
+    .line {
+      counter-increment: code;
+    }
+
+    .line:before {
+      content: counter(code);
+      float: left;
+      margin-left: -30px;
+      width: 25px;
+      text-align: right;
+    }
+</style>
+</head>
 <body>
 <pre>
 """)
@@ -111,9 +131,9 @@ def annotate(fit_result, page_sequence, out_path="annotated.html"):
             else:
                 state = -1
             if state >= 0:
-                out.write('<span style="color:red">')
+                out.write('<span class="line" style="color:red">')
             else:
-                out.write('<span style="color:black">')
+                out.write('<span class="line" style="color:black">')
             if isinstance(fragment, hp.HtmlTag):
                 if fragment.tag_type == hp.HtmlTagType.CLOSE_TAG:
                     if match[i] >= 0 and indent > 0:
