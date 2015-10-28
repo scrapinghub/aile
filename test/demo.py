@@ -112,25 +112,26 @@ def annotate(fit_result, page_sequence, out_path="annotated.html"):
                 state = -1
             if state >= 0:
                 out.write('<span style="color:red">')
+            else:
+                out.write('<span style="color:black">')
             if isinstance(fragment, hp.HtmlTag):
                 if fragment.tag_type == hp.HtmlTagType.CLOSE_TAG:
                     if match[i] >= 0 and indent > 0:
                         indent -= 1
-                    write(u'{0:3d}|&lt;/{1}&gt;\n'.format(state, fragment.tag))
+                    write(u'{0:3d}|&lt;/{1}&gt;'.format(state, fragment.tag))
                 else:
                     write(u'{0:3d}|&lt;{1}'.format(state, fragment.tag))
                     for k,v in fragment.attributes.iteritems():
                         out.write(u' {0}="{1}"'.format(k, v))
                     if fragment.tag_type == hp.HtmlTagType.UNPAIRED_TAG:
                         out.write('/')
-                    out.write('&gt;\n')
+                    out.write('&gt;')
                     if match[i] >= 0:
                         indent += 1
             else:
-                write(u'{0:3d}|{1}\n'.format(state,
+                write(u'{0:3d}|{1}'.format(state,
                     cgi.escape(page_sequence.body_segment(i).strip())))
-            if z >= fit_result.model.W:
-                out.write('</span>')
+            out.write('</span>\n')
         out.write("""
 </pre>
 </body>
