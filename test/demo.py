@@ -2,6 +2,7 @@ import os
 import sys
 import codecs
 import urllib
+import cgi
 
 import numpy as np
 import scrapely.htmlpage as hp
@@ -127,7 +128,7 @@ def annotate(fit_result, page_sequence, out_path="annotated.html"):
                         indent += 1
             else:
                 write(u'{0:3d}|{1}\n'.format(state,
-                    page_sequence.body_segment(i).strip()))
+                    cgi.escape(page_sequence.body_segment(i).strip())))
             if z >= fit_result.model.W:
                 out.write('</span>')
         out.write("""
