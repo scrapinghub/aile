@@ -93,6 +93,7 @@ def match_fragments(fragments):
                 if (last_tag.tag_type == hp.HtmlTagType.OPEN_TAG and
                     last_tag.tag == fragment.tag):
                     match[last_i] = i
+                    match[i] = last_i
                     stack.pop()
     return match
 
@@ -104,7 +105,7 @@ def extract_subtrees(fragments, w_min, w_max):
     i = 0
     while i < len(match):
         j = match[i]
-        if j > 0:
+        if j > i:
             k = j
             while k - i <= w_max:
                 if k - i >= w_min:
@@ -176,7 +177,6 @@ class PageSequence(object):
             self.body_lengths.append(l1)
             self.tags_lengths.append(l2)
         self.body = ''.join(page.body for page in pages)
-        self.code_book = util.CodeBook(self.tags)
 
     def index_tag(self, i):
         return bisect.bisect(self.tags_lengths, i)
@@ -200,8 +200,15 @@ class PageSequence(object):
             return self.body[off1 + fragment1.start:off2 + fragment2.end]
 
 
+FitResult = collections.namedtuple(
+    'FitResult',
+    ['model', 'logP', 'code_book', 'fields', 'motifs', 'items']
+)
+
+
 def fit_model(page_sequence):
-    X = np.array(map(page_sequence.code_book.code, page_sequence.tags))
+    code_book = util.CodeBook(page_sequence.tags)
+    X = np.array(map(code_book.code, page_sequence.tags))
     W = guess_motif_width(X, n_estimates=2)
 
     def html_guess_emissions(W, n_seeds):
@@ -221,7 +228,7 @@ def fit_model(page_sequence):
         emissions = []
         priors = []
         for seed in seeds:
-            f = util.guess_emissions(page_sequence.code_book.frequencies, seed)
+            f = util.guess_emissions(code_book.frequencies, seed)
             eps = f[0, :]
             emissions.append(f)
             priors.append(1.0 + 1e-3*eps)
@@ -245,7 +252,7 @@ def fit_model(page_sequence):
         model = adjust(model, motifs)
         motifs = list(extract_motifs_2(model, X))
 
-        fields = itemize(model, page_sequence.code_book)
+        fields = itemize(model, code_book)
         items, scores = extract_items(page_sequence, motifs, fields)
         valid = scores >= (np.median(scores) - 1.0)
         items = items.ix[valid]
@@ -257,7 +264,7 @@ def fit_model(page_sequence):
             [items[f] for f in fields],
             axis=1,
             keys=fields)
-        res.append((model, logP, fields, motifs, items))
+        res.append(FitResult(model, logP, code_book, fields, motifs, items))
     return res
 
 

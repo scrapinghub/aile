@@ -87,17 +87,67 @@ def make_local_url(path):
     return 'file:///' + os.path.abspath(path)
 
 
+def annotate(fit_result, page_sequence, out_path="annotated.html"):
+    X = np.array(map(fit_result.code_book.code, page_sequence.tags))
+    Z, logP = fit_result.model.viterbi(X)
+    match = pe.match_fragments(page_sequence.fragments)
+
+    with codecs.open(out_path, 'w', encoding='utf-8') as out:
+        out.write("""
+<!DOCTYPE html>
+<html lang="en-US">
+<body>
+<pre>
+""")
+        indent = 0
+        def write(s):
+            out.write(indent*'    ')
+            out.write(s)
+
+        for i, (fragment, z) in enumerate(zip(page_sequence.fragments, Z)):
+            if z >= fit_result.model.W:
+                state = z - fit_result.model.W
+            else:
+                state = -1
+            if state >= 0:
+                out.write('<span style="color:red">')
+            if isinstance(fragment, hp.HtmlTag):
+                if fragment.tag_type == hp.HtmlTagType.CLOSE_TAG:
+                    if match[i] >= 0 and indent > 0:
+                        indent -= 1
+                    write(u'{0:3d}|&lt;/{1}&gt;\n'.format(state, fragment.tag))
+                else:
+                    write(u'{0:3d}|&lt;{1}'.format(state, fragment.tag))
+                    for k,v in fragment.attributes.iteritems():
+                        out.write(u' {0}="{1}"'.format(k, v))
+                    if fragment.tag_type == hp.HtmlTagType.UNPAIRED_TAG:
+                        out.write('/')
+                    out.write('&gt;\n')
+                    if match[i] >= 0:
+                        indent += 1
+            else:
+                write(u'{0:3d}|{1}\n'.format(state,
+                    page_sequence.body_segment(i).strip()))
+            if z >= fit_result.model.W:
+                out.write('</span>')
+        out.write("""
+</pre>
+</body>
+</html>""")
+
+
 def demo2(train_test, out='demo'):
     train_urls, test_url = download(train_test)
     train = pe.PageSequence([hp.url_to_page(url) for url in train_urls])
-    models = pe.fit_model(train)
-    for model, logP, fields, motifs, items in models:
+    fit_result = pe.fit_model(train)
+    for fr in fit_result:
         outf = codecs.open(
-            '{0}-{1}.html'.format(out, model.W), 'w', encoding='utf-8')
-        items.to_html(outf)
-        print model.W, logP, pe.items_score(items), model.motif_entropy
-    return train, models
+            '{0}-{1}.html'.format(out, fr.model.W), 'w', encoding='utf-8')
+        fr.items.to_html(outf)
+        annotate(fr, train, '{0}-annotated-{1}.html'.format(out, fr.model.W))
+        print fr.model.W, fr.logP, pe.items_score(fr.items), fr.model.motif_entropy
 
+    return train, fit_result
 
 if __name__ == '__main__':
     tests = [
@@ -110,4 +160,4 @@ if __name__ == '__main__':
     ]
 
     n_test = int(sys.argv[1])
-    train, phmm = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))
+    train, fr = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))
