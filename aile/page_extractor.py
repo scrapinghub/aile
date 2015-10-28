@@ -58,7 +58,7 @@ def encode_html(page, ignore_tags='default'):
             return PageSymbol(False, None, 'text')
         elif isinstance(fragment, hp.HtmlTag):
             if fragment.tag in ignore_tags:
-                return None
+                return PageSymbol(False, None, 'text')
             if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG:
                 return PageSymbol(False,
                                   fragment.attributes.get('class'),
