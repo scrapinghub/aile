@@ -76,7 +76,10 @@ def download(train_test):
     train_download = ['{0}-{1}.html'.format(root, i) for i in range(len(train))]
     for url, local in zip(train, train_download):
         if not os.path.exists(local):
+            print '{0} -> {1}'.format(url, local)
             urllib.urlretrieve(url, local)
+        else:
+            print 'Using local version {0} of URL {1}'.format(local,url)
     test_download = '{0}-{1}.html'.format(root, len(train) + 1)
     if not os.path.exists(test_download):
         urllib.urlretrieve(test, test_download)
