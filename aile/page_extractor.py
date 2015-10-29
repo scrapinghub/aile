@@ -74,7 +74,7 @@ def encode_html(page, ignore_tags='default'):
                    [(convert(f), f) for f in page.parsed_body])))
 
 
-def match_fragments(fragments):
+def match_fragments(fragments, max_backtrack=20):
     """Find the closing fragment for every fragment.
 
     Returns: an array with as many elements as fragments. If the
@@ -87,14 +87,18 @@ def match_fragments(fragments):
         if isinstance(fragment, hp.HtmlTag):
             if fragment.tag_type == hp.HtmlTagType.OPEN_TAG:
                 stack.append((i, fragment))
-            elif (fragment.tag_type == hp.HtmlTagType.CLOSE_TAG and
-                  stack):
-                last_i, last_tag = stack[-1]
-                if (last_tag.tag_type == hp.HtmlTagType.OPEN_TAG and
-                    last_tag.tag == fragment.tag):
-                    match[last_i] = i
-                    match[i] = last_i
-                    stack.pop()
+            elif (fragment.tag_type == hp.HtmlTagType.CLOSE_TAG):
+                if max_backtrack is None:
+                    max_j = len(stack)
+                else:
+                    max_j = min(max_backtrack, len(stack))
+                for j in range(1, max_j + 1):
+                    last_i, last_tag = stack[-j]
+                    if (last_tag.tag == fragment.tag):
+                        match[last_i] = i
+                        match[i] = last_i
+                        stack[-j:] = []
+                        break
     return match
 
 
@@ -242,23 +246,20 @@ def fit_model(page_sequence):
 
     res = []
     for model, logP in models:
-        f_inc, r_inc = increase_states(model.f)
-        model = ProfileHMM(
-            f=f_inc, t=model.t, p0=np.repeat(model.p0, r_inc), eps=model.eps)
-        model.fit_em_n(X, 3)
-
         subtrees = list(extract_subtrees(page_sequence.fragments, int(model.W*0.8), int(model.W*1.2)))
         motifs = list(extract_motifs_1(model, X, subtrees))
         model = adjust(model, motifs)
+        model.fit_em_n(X, 3)
         motifs = list(extract_motifs_2(model, X))
 
         fields = itemize(model, code_book)
         items, scores = extract_items(page_sequence, motifs, fields)
-        valid = scores >= (np.median(scores) - 1.0)
+        valid = scores >= (np.max(scores) - 1.0)
         items = items.ix[valid]
         empty = uninformative_fields(items)
         fields = [f for f in fields if f not in empty]
         if not fields:
+            print "Not fields for model", model.W
             continue
         items = pd.concat(
             [items[f] for f in fields],
@@ -319,6 +320,7 @@ def itemize(phmm, code_book, ratio=2.0, tags=['text', 'a', 'img']):
 def guess_motif_width(X, n_estimates=2, min_width=10, max_width=400):
     D = [(dst.hamming(X[:-w], X[w:]), w)
          for w in np.arange(min_width, max_width)]
+    ad, aw = zip(*D)
     return [w for d, w in heapq.nsmallest(n_estimates, D, key=lambda x: x[0])]
 
 
