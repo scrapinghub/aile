@@ -161,6 +161,52 @@ def annotate(fit_result, page_sequence, out_path="annotated.html"):
 </html>""")
 
 
+def write_table(items, out_path):
+    with codecs.open(out_path, 'w', encoding='utf-8') as out:
+        out.write(u"""
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<link rel="stylesheet" type="text/css" href="table.css">
+</head>
+<body>
+<table>
+""")
+        out.write('    <tr>\n')
+        names = []
+        for col in items.columns.levels[0]:
+            _, name = pe.biggest_group(items[col]['name'])
+            if name is None:
+                name = ''
+            names.append(name)
+            out.write(u'        <th>item</th>\n')
+            out.write(u'        <th>{0}</th>\n'.format(name))
+        out.write(u'    </tr>\n')
+        for j, (i, row) in enumerate(items.iterrows()):
+            out.write(u'    <tr>\n')
+            out.write(u'          <td>{0}</td>\n'.format(j))
+            for col, cell in row.iteritems():
+                if col[1] == 'type':
+                    ctype = cell
+                elif col[1] == 'content':
+                    out.write('         <td>')
+                    if ctype == 'lnk':
+                        out.write(u'<a {0}></a>'.format(cell))
+                    elif ctype == 'img':
+                        out.write(u'<img width="100" height="100" {0}>'.format(cell))
+                    elif ctype == 'txt':
+                        out.write(cgi.escape(cell))
+                    else:
+                        out.write(u'-')
+                    out.write(u'         </td>\n')
+            out.write(u'    </tr>\n')
+        out.write(u"""
+</table>
+</body>
+</html>
+""")
+
+
 def demo2(train_test, out='demo'):
     train_urls, test_url = download(train_test)
     train = pe.PageSequence([hp.url_to_page(url) for url in train_urls])
@@ -168,7 +214,7 @@ def demo2(train_test, out='demo'):
     for fr in fit_result:
         outf = codecs.open(
             '{0}-{1}.html'.format(out, fr.model.W), 'w', encoding='utf-8')
-        fr.items.to_html(outf)
+        write_table(fr.items, '{0}-{1}.html'.format(out, fr.model.W))
         annotate(fr, train, '{0}-annotated-{1}.html'.format(out, fr.model.W))
         print fr.model.W, fr.logP, pe.items_score(fr.items), fr.model.motif_entropy
 

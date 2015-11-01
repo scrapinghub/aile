@@ -64,7 +64,7 @@ def encode_html(page, ignore_tags='default'):
                                   fragment.attributes.get('class'),
                                   fragment.tag)
             else:
-                return PageSymbol(True, None, None)
+                return PageSymbol(True, None, fragment.tag)
         else:
             return None
 
@@ -139,23 +139,25 @@ def extract_motifs_1(model, X, subtrees, G=0.5):
                 k = j
 
 
-def extract_motifs_2(model, X, prop=0.7):
+def extract_motifs_2(model, X, prop=0.7, margin=0.5):
     Z, logP = model.viterbi(X)
     def motif(i, j):
         return Motif((i, j), Z[i:j],
                             model.score(X[i:j], Z[i:j])/(j - i), 0.0)
     i1 = None
     i2 = None
+    z1 = None
     z2 = None
     for i, z in enumerate(Z):
         if z >= model.W:
-            if z2 is None:
-                z2 = z
+            if z1 is None:
                 i1 = i
-            elif z <= z2:
-                if (i2 - i1) >= model.W*prop:
+                z1 = z
+            elif z <= z2 - model.W*margin:
+                if (z2 - z1) >= model.W*prop:
                     yield motif(i1, i2+1)
                 i1 = i
+                z1 = z
             i2 = i
             z2 = z
     if i1 is not None and (i2 - i1) >= model.W*prop:
@@ -254,7 +256,7 @@ def fit_model(page_sequence):
 
         fields = itemize(model, code_book)
         items, scores = extract_items(page_sequence, motifs, fields)
-        valid = scores >= (np.max(scores) - 1.0)
+        valid = scores >= (np.max(scores) - 2.0)
         items = items.ix[valid]
         empty = uninformative_fields(items)
         fields = [f for f in fields if f not in empty]
@@ -347,9 +349,19 @@ def extract_items(page_sequence, motifs, fields):
                           fragment.tag_type != hp.HtmlTagType.CLOSE_TAG):
                         name = fragment.attributes.get('class', None)
                         if fragment.tag == 'a':
-                            f[z] = (name, 'lnk', fragment.attributes.get('href', None))
+                            attr = u''
+                            href = fragment.attributes.get('href')
+                            title = fragment.attributes.get('title')
+                            if href:
+                                attr += u'href="{0}" '.format(href)
+                            if title:
+                                attr += u'title="{0}" '.format(title)
+                            f[z] = (name, 'lnk', attr)
                         if fragment.tag == 'img':
-                            f[z] = (name, 'img', fragment.attributes.get('src', None))
+                            f[z] = (name, 'img',
+                                    u'src="{0}" alt="{1}"'.format(
+                                        fragment.attributes.get('src', ''),
+                                        fragment.attributes.get('alt', '')))
         items.append([x for field in fields
                         for x in f.get(field, (None, None, None))])
         scores.append(score)
