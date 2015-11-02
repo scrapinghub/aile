@@ -7,9 +7,14 @@ import pandas as pd
 import numpy as np
 import scipy.spatial.distance as dst
 import scrapely.htmlpage as hp
+import sklearn.cluster
 
 import aile.util as util
 from aile.phmm import ProfileHMM
+
+
+IGNORE_TAGS_DEFAULT = {'b', 'br', 'em',
+                       'i', 'small', 'strong', 'sub', 'sup', 'wbr'}
 
 
 PageSymbol = collections.namedtuple(
@@ -47,10 +52,22 @@ def encode_html(page, ignore_tags='default'):
     """
     # Ignore stylistic tags
     if ignore_tags is 'default':
-        ignore_tags = {'b', 'br', 'em',
-                       'i', 'small', 'strong', 'sub', 'sup', 'wbr'}
+        ignore_tags = IGNORE_TAGS_DEFAULT
     elif ignore_tags is None:
         ignore_tags = {}
+
+    def get_class(fragment):
+        class_attr = fragment.attributes.get('class')
+        if class_attr is None:
+            return []
+        else:
+            return class_attr.split()
+
+    # Extract all classes
+    class_count = collections.Counter(
+        class_attr
+        for fragment in page.parsed_body if isinstance(fragment, hp.HtmlTag)
+        for class_attr in get_class(fragment))
 
     def convert(fragment):
         if (fragment.is_text_content and
@@ -60,9 +77,11 @@ def encode_html(page, ignore_tags='default'):
             if fragment.tag in ignore_tags:
                 return PageSymbol(False, None, 'text')
             if fragment.tag_type != hp.HtmlTagType.CLOSE_TAG:
-                return PageSymbol(False,
-                                  fragment.attributes.get('class'),
-                                  fragment.tag)
+                class_attr = fragment.attributes.get('class')
+                if class_attr:
+                    class_attr = tuple(x for c, x in sorted(
+                        (class_count[x], x) for x in class_attr.split())[-2:])
+                return PageSymbol(False, class_attr, fragment.tag)
             else:
                 return PageSymbol(True, None, fragment.tag)
         else:
@@ -100,6 +119,14 @@ def match_fragments(fragments, max_backtrack=20):
                         stack[-j:] = []
                         break
     return match
+
+
+def build_tree(match):
+    parents = np.repeat(-1, len(match))
+    for i, j in enumerate(match):
+        if j > i:
+            parents[i+1:j] = i
+    return parents
 
 
 def extract_subtrees(fragments, w_min, w_max):
@@ -253,13 +280,9 @@ def fit_model(page_sequence):
         model = adjust(model, motifs)
         model.fit_em_n(X, 3)
         motifs = list(extract_motifs_2(model, X))
-
-        fields = itemize(model, code_book)
-        items, scores = extract_items(page_sequence, motifs, fields)
-        valid = scores >= (np.max(scores) - 2.0)
-        items = items.ix[valid]
+        items, scores = extract_items_2(page_sequence, motifs, model.W/2)
         empty = uninformative_fields(items)
-        fields = [f for f in fields if f not in empty]
+        fields = [f for f in items.columns.levels[0] if f not in empty]
         if not fields:
             print "Not fields for model", model.W
             continue
@@ -332,7 +355,33 @@ def index_fields(fields):
             np.tile(['name', 'type', 'content'], N)]
 
 
-def extract_items(page_sequence, motifs, fields):
+def fragment_to_cell(page_sequence, i, fragment):
+    if fragment is not None:
+        if fragment.is_text_content:
+            txt = page_sequence.body_segment(i)
+            if txt.strip():
+                return (None, 'txt', txt)
+        elif (isinstance(fragment, hp.HtmlTag) and
+              fragment.tag_type != hp.HtmlTagType.CLOSE_TAG):
+            name = fragment.attributes.get('class', None)
+            if fragment.tag == 'a':
+                attr = u''
+                href = fragment.attributes.get('href')
+                title = fragment.attributes.get('title')
+                if href:
+                    attr += u'href="{0}" '.format(href)
+                if title:
+                    attr += u'title="{0}" '.format(title)
+                return (name, 'lnk', attr)
+            if fragment.tag == 'img':
+                return (name, 'img',
+                        u'src="{0}" alt="{1}"'.format(
+                            fragment.attributes.get('src', ''),
+                            fragment.attributes.get('alt', '')))
+        return (None, None, None)
+
+
+def extract_items_1(page_sequence, motifs, fields):
     items = []
     scores = []
     for (i, j), Z, score, H in motifs:
@@ -340,34 +389,111 @@ def extract_items(page_sequence, motifs, fields):
         for k, z in enumerate(Z):
             if z in fields:
                 fragment = page_sequence.fragments[i + k]
-                if fragment is not None:
-                    if fragment.is_text_content:
-                        txt = page_sequence.body_segment(i + k)
-                        if txt.strip():
-                            f[z] = (None, 'txt', txt)
-                    elif (isinstance(fragment, hp.HtmlTag) and
-                          fragment.tag_type != hp.HtmlTagType.CLOSE_TAG):
-                        name = fragment.attributes.get('class', None)
-                        if fragment.tag == 'a':
-                            attr = u''
-                            href = fragment.attributes.get('href')
-                            title = fragment.attributes.get('title')
-                            if href:
-                                attr += u'href="{0}" '.format(href)
-                            if title:
-                                attr += u'title="{0}" '.format(title)
-                            f[z] = (name, 'lnk', attr)
-                        if fragment.tag == 'img':
-                            f[z] = (name, 'img',
-                                    u'src="{0}" alt="{1}"'.format(
-                                        fragment.attributes.get('src', ''),
-                                        fragment.attributes.get('alt', '')))
+                f[z] = fragment_to_cell(page_sequence, i + k, fragment)
         items.append([x for field in fields
                         for x in f.get(field, (None, None, None))])
         scores.append(score)
     return pd.DataFrame.from_records(
         items,
         columns=index_fields(fields)), np.array(scores)
+
+
+def relative_paths(parents, i, j):
+    paths = []
+    for k in range(i, j):
+        p = []
+        q = k
+        while q >= i:
+            p.append(q)
+            q = parents[q]
+        paths.append(p)
+    return paths
+
+
+def rpath_walk(rpath, tags, max_depth=2, ignore_tags='default'):
+    # Ignore stylistic tags
+    if ignore_tags is 'default':
+        ignore_tags = IGNORE_TAGS_DEFAULT
+    elif ignore_tags is None:
+        ignore_tags = {}
+    N = len(rpath)
+    if max_depth is None:
+        max_depth = N
+    i = 0
+    walk = []
+    while i < max_depth:
+        symbol = tags[rpath[i]]
+        if symbol.tag not in ignore_tags:
+            walk.append(symbol)
+            i += 1
+        if i >= N:
+            break
+    return tuple(walk)
+
+
+def rpath_group(rpaths, tags, max_depth=2, ignore_tags='default'):
+    walks = [rpath_walk(rpath, tags, max_depth, ignore_tags)
+             for rpath in rpaths]
+    count = collections.defaultdict(int)
+    group = []
+    for walk in walks:
+        group.append((walk, count[walk]))
+        count[walk] += 1
+    return group
+
+
+def align_motifs(page_sequence, motifs):
+    match = match_fragments(page_sequence.fragments)
+    parents = build_tree(match)
+    rpath_groups = [rpath_group(relative_paths(parents, i, j), page_sequence.tags)
+                    for (i, j), Z, score_1, score_2 in motifs]
+    code_book = util.CodeBook(rpath
+                              for rpath_group in rpath_groups
+                              for rpath in rpath_group)
+    N = len(motifs)
+    A = len(code_book)
+    alignment = np.repeat(-1, N*A).reshape(N, A)
+    for rgroup, motif in zip(rpath_groups, alignment):
+        for i, rpath in enumerate(rgroup):
+            motif[code_book.code(rpath)] = i
+    return alignment, code_book
+
+
+def filter_motifs(alignment, max_diff=10):
+    clt = sklearn.cluster.DBSCAN(
+        eps=float(max_diff)/alignment.shape[1], min_samples=4, metric='hamming')
+    y = clt.fit_predict(alignment != -1)
+    u, c = np.unique(y, return_counts=True)
+    return y == u[np.argmax(c)]
+
+
+def filter_columns(alignment, flag):
+    return np.any(alignment[flag, :]!=-1, axis=0)
+
+
+def extract_items_2(page_sequence, motifs, max_diff):
+    alignment, code_book = align_motifs(page_sequence, motifs)
+    rows = filter_motifs(alignment, max_diff)
+    cols = np.nonzero(filter_columns(alignment, rows))[0]
+    valid = alignment[rows, :]
+    motifs = [motif for motif, is_valid in zip(motifs, rows) if is_valid]
+    items = []
+    for align, motif in zip(valid, motifs):
+        row = []
+        for c in cols:
+            idx = align[c]
+            if idx >= 0:
+                i = motif.range[0] + idx
+                cell = fragment_to_cell(
+                    page_sequence, i, page_sequence.fragments[i])
+            else:
+                cell = (None, None, None)
+            row += cell
+        items.append(row)
+    fields = np.arange(len(cols))
+    return pd.DataFrame.from_records(
+        items,
+        columns=index_fields(fields)), None
 
 
 def biggest_group(series):
