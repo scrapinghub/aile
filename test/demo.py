@@ -172,15 +172,6 @@ def write_table(items, out_path):
 <body>
 <table>
 """)
-        out.write('    <tr>\n')
-        names = []
-        for col in items.columns.levels[0]:
-            _, name = pe.biggest_group(items[col]['name'])
-            if name is None:
-                name = ''
-            names.append(name)
-            out.write(u'        <th>item</th>\n')
-            out.write(u'        <th>{0}</th>\n'.format(name))
         out.write(u'    </tr>\n')
         for j, (i, row) in enumerate(items.iterrows()):
             out.write(u'    <tr>\n')
@@ -191,7 +182,7 @@ def write_table(items, out_path):
                 elif col[1] == 'content':
                     out.write('         <td>')
                     if ctype == 'lnk':
-                        out.write(u'<a {0}></a>'.format(cell))
+                        out.write(u'{0}'.format(cgi.escape(cell)))
                     elif ctype == 'img':
                         out.write(u'<img width="100" height="100" {0}>'.format(cell))
                     elif ctype == 'txt':
