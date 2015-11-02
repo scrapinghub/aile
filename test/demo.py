@@ -42,22 +42,22 @@ def train_test(pattern, start, end):
 
 def train_test_1(n_train=2):
     return ('hn',
-            train_test('https://news.ycombinator.com/news?p={0}', 1, n_train + 1))
+            train_test('https://news.ycombinator.com/news?p={0}', 1, n_train))
 
 
 def train_test_2(n_train=1):
     return ('patchofland',
-            train_test('https://patchofland.com/investments/page/{0}.html', 1, n_train + 1))
+            train_test('https://patchofland.com/investments/page/{0}.html', 1, n_train))
 
 
 def train_test_3(n_train=6):
     return ('ebay',
-            train_test('http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}', 1, n_train + 1))
+            train_test('http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}', 1, n_train))
 
 
 def train_test_4(n_train=6):
     return ('monster',
-            train_test('http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F', 1, n_train + 1))
+            train_test('http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F', 1, n_train))
 
 
 def train_test_5(n_train=3):
@@ -68,12 +68,26 @@ def train_test_5(n_train=3):
 
 def train_test_6(n_train=3):
     return ('arstechnica',
-            train_test('http://arstechnica.com/page/{0}/', 1, n_train + 1))
+            train_test('http://arstechnica.com/page/{0}/', 1, n_train))
+
+
+def train_test_7(n_train=1):
+    return ('kickstarter',
+            train_test(
+                'https://www.kickstarter.com/discover/advanced?state=live&category_id=16&woe_id=0&sort=popularity&seed=2410820&page={0}',
+                1, n_train))
+
+
+def train_test_8(n_train=5):
+    return ('milanuncios',
+            train_test(
+                'http://www.milanuncios.com/motor/?pagina={0}',
+                1, n_train))
 
 
 def download(train_test):
     root, (train, test) = train_test
-    train_download = ['{0}-{1}.html'.format(root, i) for i in range(len(train))]
+    train_download = ['{0}-{1}.html'.format(root, i) for i in range(1, len(train) + 1)]
     for url, local in zip(train, train_download):
         if not os.path.exists(local):
             print '{0} -> {1}'.format(url, local)
@@ -201,12 +215,14 @@ def write_table(items, out_path):
 def demo2(train_test, out='demo'):
     train_urls, test_url = download(train_test)
     train = pe.PageSequence([hp.url_to_page(url) for url in train_urls])
+    test = pe.PageSequence([hp.url_to_page(test_url)])
     fit_result = pe.fit_model(train)
     for fr in fit_result:
-        outf = codecs.open(
-            '{0}-{1}.html'.format(out, fr.model.W), 'w', encoding='utf-8')
-        write_table(fr.items, '{0}-{1}.html'.format(out, fr.model.W))
-        annotate(fr, train, '{0}-annotated-{1}.html'.format(out, fr.model.W))
+        write_table(fr.items, '{0}-train-{1}.html'.format(out, fr.model.W))
+        write_table(pe.fit_result_extract(fr.model, fr.code_book, fr.extractors, test),
+                    '{0}-test-{1}.html'.format(out, fr.model.W))
+        annotate(fr, train, '{0}-train-annotated-{1}.html'.format(out, fr.model.W))
+        annotate(fr, test, '{0}-test-annotated-{1}.html'.format(out, fr.model.W))
         print fr.model.W, fr.logP, pe.items_score(fr.items), fr.model.motif_entropy
 
     return train, fit_result
@@ -218,7 +234,9 @@ if __name__ == '__main__':
         train_test_3,
         train_test_4,
         train_test_5,
-        train_test_6
+        train_test_6,
+        train_test_7,
+        train_test_8
     ]
 
     n_test = int(sys.argv[1])

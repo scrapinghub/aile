@@ -141,8 +141,11 @@ def extract_subtrees(fragments, w_min, w_max):
             while k - i <= w_max:
                 if k - i >= w_min:
                     yield (i, k)
-                k = match[k + 1]
-                if k < j:
+                if k < len(match) - 1:
+                    k = match[k + 1]
+                    if k < j:
+                        break
+                else:
                     break
         i += 1
 
@@ -235,7 +238,7 @@ class PageSequence(object):
 
 FitResult = collections.namedtuple(
     'FitResult',
-    ['model', 'logP', 'code_book', 'fields', 'motifs', 'items']
+    ['model', 'logP', 'code_book', 'extractors', 'motifs', 'items']
 )
 
 
@@ -280,9 +283,10 @@ def fit_model(page_sequence):
         model = adjust(model, motifs)
         model.fit_em_n(X, 3)
         motifs = list(extract_motifs_2(model, X))
-        items, scores = extract_items_2(page_sequence, motifs, model.W/2)
+        items, extractors = extract_items_2(page_sequence, motifs, model.W/2)
         empty = uninformative_fields(items)
         fields = [f for f in items.columns.levels[0] if f not in empty]
+        extractors = [e for i, e in enumerate(extractors) if i not in empty]
         if not fields:
             print "Not fields for model", model.W
             continue
@@ -290,8 +294,36 @@ def fit_model(page_sequence):
             [items[f] for f in fields],
             axis=1,
             keys=fields)
-        res.append(FitResult(model, logP, code_book, fields, motifs, items))
+        res.append(FitResult(model, logP, code_book, extractors, motifs, items))
     return res
+
+
+def fit_result_extract(model, code_book, extractors, page_sequence, min_prop=0.6):
+    X = np.array(map(code_book.code, page_sequence.tags))
+    motifs = list(extract_motifs_2(model, X))
+    match = match_fragments(page_sequence.fragments)
+    parents = build_tree(match)
+
+    items = []
+    for (i, j), Z, score_1, score_2 in motifs:
+        row = []
+        rgroup = rpath_group(relative_paths(parents, i, j), page_sequence.tags)
+        success = 0
+        for extractor in extractors:
+            try:
+                k = rgroup.index(extractor)
+                cell = fragment_to_cell(
+                    page_sequence, i + k, page_sequence.fragments[i + k])
+                success += 1
+            except ValueError:
+                cell = (None, None, None)
+            row += cell
+        if float(success)/len(extractors) >= min_prop:
+            items.append(row)
+    fields = range(len(extractors))
+    return pd.DataFrame.from_records(
+        items,
+        columns=index_fields(fields))
 
 
 def adjust(phmm, motifs):
@@ -493,7 +525,7 @@ def extract_items_2(page_sequence, motifs, max_diff):
     fields = np.arange(len(cols))
     return pd.DataFrame.from_records(
         items,
-        columns=index_fields(fields)), None
+        columns=index_fields(fields)), map(code_book.decode, cols)
 
 
 def biggest_group(series):
