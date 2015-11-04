@@ -1,11 +1,9 @@
-import heapq
 import itertools
 import bisect
 import collections
 
 import pandas as pd
 import numpy as np
-import scipy.spatial.distance as dst
 import scrapely.htmlpage as hp
 import sklearn.cluster
 
@@ -281,7 +279,7 @@ def fit_model(page_sequence):
         subtrees = list(extract_subtrees(page_sequence.fragments, int(model.W*0.8), int(model.W*1.2)))
         motifs = list(extract_motifs_1(model, X, subtrees))
         model = adjust(model, motifs)
-        model.fit_em_n(X, 3)
+        model.fit_em_1(X, 1)
         motifs = list(extract_motifs_2(model, X))
         items, extractors = extract_items_2(page_sequence, motifs, model.W/2)
         empty = uninformative_fields(items)
@@ -375,10 +373,24 @@ def itemize(phmm, code_book, ratio=2.0, tags=['text', 'a', 'img']):
 
 
 def guess_motif_width(X, n_estimates=2, min_width=10, max_width=400):
-    D = [(dst.hamming(X[:-w], X[w:]), w)
-         for w in np.arange(min_width, max_width)]
+    bw = 2
+    def distance(X, w):
+        Z = np.ones(X.shape, dtype=int)
+        for i in range(-bw, bw + 1):
+            v = w + i
+            Z[v:] = np.logical_and(Z[v:], X[:-v] != X[v:])
+        return float(Z.sum())/(len(X) - w)
+
+    D = [(distance(X, w), w)
+                for w in np.arange(min_width, max_width)]
     ad, aw = zip(*D)
-    return [w for d, w in heapq.nsmallest(n_estimates, D, key=lambda x: x[0])]
+    estimates = []
+    for d, w in sorted(D):
+        if not estimates or abs(estimates[-1] - w) > 2*bw:
+            estimates.append(w)
+        if len(estimates) >= n_estimates:
+            break
+    return estimates
 
 
 def index_fields(fields):
