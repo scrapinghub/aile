@@ -7,45 +7,7 @@ import scipy.sparse as sparse
 import scrapely.htmlpage as hp
 import sklearn.cluster
 
-import page_extractor as pe
-
-
-def expand_class(fragments):
-    r = []
-    for fragment in fragments:
-        if isinstance(fragment, hp.HtmlTag):
-            class_attr = fragment.attributes.get('class')
-            if class_attr:
-                new_attr = dict(fragment.attributes)
-                del new_attr['class']
-                r.append(
-                    hp.HtmlTag(
-                        hp.HtmlTagType.OPEN_TAG,
-                        fragment.tag,
-                        fragment.attributes,
-                        fragment.start,
-                        fragment.end))
-                for c in class_attr.split():
-                    r.append(
-                        hp.HtmlTag(
-                            hp.HtmlTagType.UNPAIRED_TAG,
-                            '[class]' + c,
-                            dict(),
-                            fragment.start,
-                            fragment.end))
-                if fragment.tag_type == hp.HtmlTagType.UNPAIRED_TAG:
-                    r.append(
-                        hp.HtmlTag(
-                            hp.HtmlTagType.CLOSE_TAG,
-                            fragment.tag,
-                            dict(),
-                            fragment.start,
-                            fragment.end))
-            else:
-                r.append(fragment)
-        else:
-            r.append(fragment)
-    return r
+import aile.page_extractor as pe
 
 
 def filter_empty_text(page):
@@ -56,13 +18,13 @@ def filter_empty_text(page):
                 page.body[fragment.start:fragment.end].strip())]
 
 
-def jaccard_index(s1, s2):
+def jaccard_index(s1, s2, null_val=1.0):
     """Compute Jaccard index between two sets"""
     if s1 or s2:
         I = float(len(s1 & s2))
         return I / (len(s1) + len(s2) - I)
     else:
-        return 1.0
+        return null_val
 
 
 def is_tag(fragment):
@@ -73,13 +35,18 @@ def is_tag(fragment):
 def get_class(fragment):
     """Return a set with class attributes for a given fragment"""
     if is_tag(fragment):
-        return set((fragment.attributes.get('class') or '').split())
+        s = set((fragment.attributes.get('class') or '').split())
+        s.add(fragment.tag)
+        return s
     else:
-        return set()
+        s = set()
+        if fragment.is_text_content:
+            s.add('[T]')
+        return s
 
 
-def class_similarity(f1, f2):
-    return jaccard_index(get_class(f1), get_class(f2))
+def class_similarity(f1, f2, no_class=1.0):
+    return jaccard_index(get_class(f1), get_class(f2), no_class)
 
 
 def match_class(f1, f2, threshold=0.5):
@@ -143,9 +110,10 @@ def check_order(op, parents):
         C[i, j] = 1
 
 
-def children(fragments, match, i):
+def children(fragments, match, parents, i):
     """Children of the i-th fragment"""
-    return [i + 1 + j for j, fragment in get_nodes(fragments[i+1: max(match[i], i+1)])]
+    return [k for k in [i + 1 + j for j, fragment in get_nodes(fragments[i+1: max(match[i], i+1)])]
+            if parents[k] == i]
 
 
 def is_ascendant(match, i_child, i_ascendant):
@@ -153,22 +121,23 @@ def is_ascendant(match, i_child, i_ascendant):
     return i_child >= i_ascendant and i_child <= match[i_ascendant]
 
 
-def build_counts(fragments, max_depth=4, sim=class_similarity, max_childs=50):
-    match = pe.match_fragments(fragments)
-    parents = pe.build_tree(match)
-    pairs = order_pairs(fragments)
+def build_counts(fragments, match, parents,
+                 max_depth=3, sim=lambda a, b: class_similarity(a, b, 1e-2), max_childs=20):
     N = len(fragments)
+    if max_childs is None:
+        max_childs = N
+    pairs = order_pairs(fragments)
     C = np.zeros((N, N, max_depth), dtype=float)
-    S = np.zeros((N + 1, N + 1, max_depth), dtype=float)
+    S = np.zeros((max_childs + 1, max_childs + 1, max_depth), dtype=float)
     S[0, :, :] = S[:, 0, :] = 1
     for i1, i2 in pairs:
-        ch1 = children(fragments, match, i1)
-        ch2 = children(fragments, match, i2)
+        ch1 = children(fragments, match, parents, i1)
+        ch2 = children(fragments, match, parents, i2)
         if not ch1 and not ch2:
             C[i2, i1, :] = C[i1, i2, :] = sim(fragments[i1], fragments[i2])
         else:
-            nc1 = len(ch1)
-            nc2 = len(ch2)
+            nc1 = min(len(ch1), max_childs)
+            nc2 = min(len(ch2), max_childs)
             for j1 in range(1, nc1 + 1):
                 for j2 in range(1, nc2 + 1):
                     S[j1, j2,  :]  = S[j1 - 1, j2    , :  ] +\
@@ -180,14 +149,18 @@ def build_counts(fragments, max_depth=4, sim=class_similarity, max_childs=50):
     return C[:, :, max_depth - 1]
 
 
-def kernel(counts, parents):
-    K = np.zeros(counts.shape)
+def kernel(fragments, match=None, parents=None,
+           max_depth=4, sim=class_similarity, max_childs=20):
+    match = match if match is not None else pe.match_fragments(fragments)
+    parents = parents if parents is not None else pe.build_tree(match)
+    C = build_counts(fragments, match, parents, max_depth, sim, max_childs)
+    K = np.zeros(C.shape)
     N = K.shape[0]
     for i in range(N - 1, -1, -1):
+        pi = parents[i]
         for j in range(N - 1, -1, -1):
-            K[i, j] += counts[i, j]
-            pi = parents[i]
             pj = parents[j]
+            K[i, j] += C[i, j]
             if pi > 0:
                 K[pi, j] += K[i, j]
             if pj > 0:
@@ -195,22 +168,37 @@ def kernel(counts, parents):
     return K
 
 
-def dist_matrix(K):
+def normalize_kernel(K):
+    d = np.diag(K).copy()
+    N = len(d)
+    d[d == 0] = 1.0
+    return K/np.sqrt(np.tile(d, (N, 1))*np.tile(d.reshape(N, -1), (1, N)))
+
+
+def kernel_to_distance(K):
     d = np.diag(K)
     N = len(d)
     return np.sqrt(
         np.tile(d, (N, 1)) + np.tile(d.reshape(N, -1), (1, N)) - 2*K)
 
 
-def cluster(match, D):
-    for i in range(len(match)):
-        j = max(i+1, match[i]+1)
-        D[i, i+1:j] = np.inf
-        D[i+1:j, i] = np.inf
-    clt = sklearn.cluster.DBSCAN(eps=1.0, min_samples=4, metric='precomputed')
+def cluster(fragments, match, K):
+    D = kernel_to_distance(normalize_kernel(K))
+    clt = sklearn.cluster.DBSCAN(eps=0.5, min_samples=8, metric='precomputed')
     lab = clt.fit_predict(D)
-    grp, cnt = np.unique(lab, return_counts=True)
-    
+    grp = collections.defaultdict(list)
+    i = 0
+    while i < len(match):
+        l = lab[i]
+        if l != -1:
+            if fragment_to_node(fragments[i]):
+                grp[l].append(i)
+            i = max(i, match[i]) + 1
+        else:
+            i += 1
+    grp = {k: np.array(v) for k, v in grp.iteritems()}
+    scores = {k: np.mean(K[v,:][:, v]) for k, v in grp.iteritems()}
+    return lab, grp, scores
 
 
 def fragment_name(fragment):
@@ -226,10 +214,13 @@ def fragment_name(fragment):
         return ''
 
 
-def build_tree(fragments, parents):
+def build_tree(fragments, parents, labels=None):
     root = ete2.Tree(name='root')
     T = [ete2.Tree(name=(fragment_name(f)+'(' + str(i) + ')'))
          for i, f in enumerate(fragments)]
+    if labels is not None:
+        for t, lab in zip(T, labels):
+            t.name += 'lab=' + str(lab)
     for i, (f, p) in enumerate(zip(fragments, parents)):
         if isinstance(f, hp.HtmlTag) and f.tag_type == hp.HtmlTagType.CLOSE_TAG:
             continue
@@ -244,10 +235,11 @@ def build_tree(fragments, parents):
 
 
 if __name__ == '__main__':
-    page = hp.url_to_page('https://patchofland.com/')
-
+    page = hp.url_to_page('https://patchofland.com/investments.html')
     fragments = filter_empty_text(page)
-    C = build_counts(fragments)
     match = pe.match_fragments(fragments)
     parents = pe.build_tree(match)
-    t = build_tree(fragments, parents)
+
+    K = kernel(fragments, match, parents)
+    l, c, s = cluster(fragments, match, K)
+    t = build_tree(fragments, parents, labels=l)
