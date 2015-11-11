@@ -3,7 +3,6 @@ import itertools
 
 import ete2
 import numpy as np
-import scipy.sparse as sparse
 import scrapely.htmlpage as hp
 import sklearn.cluster
 
@@ -122,7 +121,7 @@ def is_ascendant(match, i_child, i_ascendant):
 
 
 def build_counts(fragments, match, parents,
-                 max_depth=3, sim=lambda a, b: class_similarity(a, b, 1e-2), max_childs=20):
+                 max_depth=4, sim=class_similarity, max_childs=20):
     N = len(fragments)
     if max_childs is None:
         max_childs = N
@@ -182,20 +181,18 @@ def kernel_to_distance(K):
         np.tile(d, (N, 1)) + np.tile(d.reshape(N, -1), (1, N)) - 2*K)
 
 
-def cluster(fragments, match, K):
-    D = kernel_to_distance(normalize_kernel(K))
-    clt = sklearn.cluster.DBSCAN(eps=0.5, min_samples=8, metric='precomputed')
+def kernel_to_radial_distance(K):
+    return -np.log(normalize_kernel(K))
+
+
+def cluster(fragments, match, parents, K):
+    D = kernel_to_radial_distance(K)
+    D[np.isinf(D)] = 1e6
+    clt = sklearn.cluster.DBSCAN(eps=0.01, min_samples=4, metric='precomputed')
     lab = clt.fit_predict(D)
     grp = collections.defaultdict(list)
-    i = 0
-    while i < len(match):
-        l = lab[i]
-        if l != -1:
-            if fragment_to_node(fragments[i]):
-                grp[l].append(i)
-            i = max(i, match[i]) + 1
-        else:
-            i += 1
+    for i, l in enumerate(lab):
+        grp[l].append(i)
     grp = {k: np.array(v) for k, v in grp.iteritems()}
     scores = {k: np.mean(K[v,:][:, v]) for k, v in grp.iteritems()}
     return lab, grp, scores
@@ -235,11 +232,12 @@ def build_tree(fragments, parents, labels=None):
 
 
 if __name__ == '__main__':
-    page = hp.url_to_page('https://patchofland.com/investments.html')
+    page = hp.url_to_page('http://www.ebay.com/sch/Car-and-Truck-Tires/66471/bn_584423/i.html')
+#    page = hp.url_to_page('https://patchofland.com/investments.html')
     fragments = filter_empty_text(page)
     match = pe.match_fragments(fragments)
     parents = pe.build_tree(match)
 
     K = kernel(fragments, match, parents)
-    l, c, s = cluster(fragments, match, K)
+    l, c, s = cluster(fragments, match, parents, K)
     t = build_tree(fragments, parents, labels=l)
