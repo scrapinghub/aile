@@ -148,37 +148,59 @@ def build_counts(fragments, match, parents,
     return C[:, :, max_depth - 1]
 
 
-def kernel(fragments, match=None, parents=None,
-           max_depth=4, sim=class_similarity, max_childs=20):
-    match = match if match is not None else pe.match_fragments(fragments)
-    parents = parents if parents is not None else pe.build_tree(match)
-    C = build_counts(fragments, match, parents, max_depth, sim, max_childs)
+def kernel(fragments, match=None, parents=None, counts=None,
+           max_depth=2, sim=class_similarity, max_childs=20, decay=0.1):
+    if match is None:
+        match = pe.match_fragments(fragments)
+    if parents is None:
+        parents = pe.build_tree(match)
+    if counts is None:
+        C = build_counts(fragments, match, parents, max_depth, sim, max_childs)
+    else:
+        C = counts
     K = np.zeros(C.shape)
     N = K.shape[0]
+
+    A = C.copy()
+    B = C.copy()
     for i in range(N - 1, -1, -1):
         pi = parents[i]
         for j in range(N - 1, -1, -1):
             pj = parents[j]
-            K[i, j] += C[i, j]
             if pi > 0:
-                K[pi, j] += K[i, j]
+                A[pi, j] += decay*A[i, j]
             if pj > 0:
-                K[i, pj] += K[i, j]
+                B[i, pj] += decay*B[i, j]
+    for i in range(N - 1, -1, -1):
+        pi = parents[i]
+        for j in range(N - 1, -1, -1):
+            ri = max(match[i], i) + 1
+            rj = max(match[j], j) + 1
+            K[i, j] += A[i, j] + B[i, j] - C[i, j]
+            pj = parents[j]
+            if pi > 0 and pj > 0:
+                K[pi, pj] += decay*K[i, j]
+
     return K
+
+
+def to_rows(d):
+    return np.tile(d, (len(d), 1))
+
+
+def to_cols(d):
+    return np.tile(d.reshape(len(d), -1), (1, len(d)))
 
 
 def normalize_kernel(K):
     d = np.diag(K).copy()
-    N = len(d)
     d[d == 0] = 1.0
-    return K/np.sqrt(np.tile(d, (N, 1))*np.tile(d.reshape(N, -1), (1, N)))
+    return K/np.sqrt(to_rows(d)*to_cols(d))
 
 
 def kernel_to_distance(K):
     d = np.diag(K)
-    N = len(d)
-    return np.sqrt(
-        np.tile(d, (N, 1)) + np.tile(d.reshape(N, -1), (1, N)) - 2*K)
+    return np.sqrt(to_rows(d) + to_cols(d) - 2*K)
 
 
 def kernel_to_radial_distance(K):
@@ -186,15 +208,15 @@ def kernel_to_radial_distance(K):
 
 
 def cluster(fragments, match, parents, K):
-    D = kernel_to_radial_distance(K)
-    D[np.isinf(D)] = 1e6
-    clt = sklearn.cluster.DBSCAN(eps=0.01, min_samples=4, metric='precomputed')
+    D = kernel_to_distance(normalize_kernel(K))
+    clt = sklearn.cluster.DBSCAN(eps=0.76, min_samples=8, metric='precomputed')
     lab = clt.fit_predict(D)
     grp = collections.defaultdict(list)
     for i, l in enumerate(lab):
         grp[l].append(i)
     grp = {k: np.array(v) for k, v in grp.iteritems()}
-    scores = {k: np.mean(K[v,:][:, v]) for k, v in grp.iteritems()}
+    scores = {k: sum(max(0, match[i] - i) for i in v)
+              for k, v in grp.iteritems()}
     return lab, grp, scores
 
 
@@ -232,8 +254,9 @@ def build_tree(fragments, parents, labels=None):
 
 
 if __name__ == '__main__':
-    page = hp.url_to_page('http://www.ebay.com/sch/Car-and-Truck-Tires/66471/bn_584423/i.html')
+#    page = hp.url_to_page('http://www.ebay.com/sch/Car-and-Truck-Tires/66471/bn_584423/i.html')
 #    page = hp.url_to_page('https://patchofland.com/investments.html')
+    page = hp.url_to_page('http://jobsearch.monster.co.uk/browse/?re=nv_gh_gnl1147_%2F')
     fragments = filter_empty_text(page)
     match = pe.match_fragments(fragments)
     parents = pe.build_tree(match)
