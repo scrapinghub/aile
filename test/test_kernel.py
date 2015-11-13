@@ -1,3 +1,5 @@
+import time
+
 import scrapely.htmlpage as hp
 import ete2
 
@@ -26,10 +28,12 @@ if __name__ == '__main__':
 #    page = hp.url_to_page('http://www.ebay.com/sch/Car-and-Truck-Tires/66471/bn_584423/i.html')
 #    page = hp.url_to_page('https://patchofland.com/investments.html')
     page = hp.url_to_page('http://jobsearch.monster.co.uk/browse/?re=nv_gh_gnl1147_%2F')
-    page_tree = ker.PageTree(page)
 
+    t1 = time.clock()
+    page_tree = ker.PageTree(page)
     K = ker.kernel(page_tree)
     l = ker.cluster(K)
     g, s = ker.score_clusters(page_tree, l)
+    print 'Total time: {0} seconds'.format(time.clock() - t1)
     t = build_tree(page_tree, labels=l)
     t.show()

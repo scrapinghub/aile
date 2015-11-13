@@ -24,9 +24,9 @@ def is_tag(fragment):
 def get_class(fragment):
     """Return a set with class attributes for a given fragment"""
     if is_tag(fragment):
-        return set((fragment.attributes.get('class') or '').split())
+        return frozenset((fragment.attributes.get('class') or '').split())
     else:
-        return set()
+        return frozenset()
 
 
 def get_tag(fragment):
@@ -41,7 +41,7 @@ def get_tag(fragment):
 class TreeNode(object):
     __slots__ = ('tag', 'class_attr')
 
-    def __init__(self, tag, class_attr=set()):
+    def __init__(self, tag, class_attr=frozenset()):
         self.tag = tag
         self.class_attr = class_attr
 
@@ -65,8 +65,8 @@ class TreeNode(object):
     @classmethod
     def similarity(cls, a, b, no_class=1.0):
         return jaccard_index(
-            set([a.tag]) | a.class_attr,
-            set([b.tag]) | b.class_attr,
+            frozenset([a.tag]) | a.class_attr,
+            frozenset([b.tag]) | b.class_attr,
             no_class)
 
 
@@ -123,7 +123,6 @@ class PageTree(object):
         for i, m in enumerate(self.match):
             self.parents[i+1:m] = i
 
-
     def __len__(self):
         return len(self.index)
 
@@ -142,8 +141,8 @@ class PageTree(object):
                         break
         return C
 
-    def similarity(self, i, j):
-        return TreeNode.similarity(self.nodes[i], self.nodes[j])
+    def similarity(self, i1, i2):
+        return TreeNode.similarity(self.nodes[i1], self.nodes[i2])
 
 
 def to_rows(d):

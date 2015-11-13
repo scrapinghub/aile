@@ -34,12 +34,31 @@ def check_order(op, parents):
         C[i, j] = 1
 
 
-@cython.boundscheck(False)        
+def similarity(ptree):
+    all_classes = list({node.class_attr for node in ptree.nodes})
+    class_index = {c: i for i, c in enumerate(all_classes)}
+    class_map = np.array([class_index[node.class_attr] for node in ptree.nodes])
+    N = len(all_classes)
+    similarity = np.zeros((N, N), dtype=float)
+    for i in range(N):
+        for j in range(N):
+            li = len(all_classes[i])
+            lj = len(all_classes[j])
+            lk = len(all_classes[i] & all_classes[j])
+            similarity[i, j] = (1.0 + lk)/(1.0 + li + lj - lk)
+    return class_map, similarity
+
+
+@cython.boundscheck(False)
 cpdef build_counts(ptree, int max_depth=4, int max_childs=20):
     cdef int N = len(ptree)
     if max_childs is None:
         max_childs = N
     pairs = order_pairs(ptree.nodes)
+    cdef np.ndarray[np.double_t, ndim=2] sim
+    cdef np.ndarray[np.int_t, ndim=1] cmap
+    cmap, sim = similarity(ptree)
+
     cdef np.ndarray[np.double_t, ndim=3] C = np.zeros((N, N, max_depth), dtype=float)
     cdef np.ndarray[np.double_t, ndim=3] S = np.zeros(
         (max_childs + 1, max_childs + 1, max_depth), dtype=float)
@@ -48,8 +67,9 @@ cpdef build_counts(ptree, int max_depth=4, int max_childs=20):
     cdef int i1, i2, j1, j2, k1, k2
     cdef np.ndarray[np.int_t, ndim=2] children = ptree.children_matrix(max_childs)
     for i1, i2 in pairs:
+        s = sim[cmap[i1], cmap[i2]]
         if children[i1, 0] == -1 and children[i2, 0] == -1:
-            C[i2, i1, :] = C[i1, i2, :] = ptree.similarity(i1, i2)
+            C[i2, i1, :] = C[i1, i2, :] = s
         else:
             for j1 in range(1, max_childs + 1):
                 k1 = children[i1, j1 - 1]
@@ -63,8 +83,7 @@ cpdef build_counts(ptree, int max_depth=4, int max_childs=20):
                                      S[j1    , j2 - 1, :  ] -\
                                      S[j1 - 1, j2 - 1, :  ]
                     S[j1, j2, 1:] += S[j1 - 1, j2 - 1, :-1]*C[k1, k2, :-1]
-            C[i2, i1, :] = C[i1, i2, :] = \
-                        ptree.similarity(i1, i2)*S[j1, j2, :]
+            C[i2, i1, :] = C[i1, i2, :] = s*S[j1 - 1, j2 - 1, :]
     return C[:, :, max_depth - 1]
 
 
