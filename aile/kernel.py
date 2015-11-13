@@ -1,12 +1,11 @@
 import collections
-import itertools
 
 import numpy as np
 import sklearn.cluster
 import scrapely.htmlpage as hp
 
 import aile.page_extractor as pe
-
+import aile._kernel as _ker
 
 def jaccard_index(s1, s2, null_val=1.0):
     """Compute Jaccard index between two sets"""
@@ -131,90 +130,20 @@ class PageTree(object):
     def children(self, i):
         return i + 1 + np.flatnonzero(self.parents[i+1:self.match[i]] == i)
 
+    def children_matrix(self, max_childs=20):
+        N = len(self.parents)
+        C = np.repeat(-1, N*max_childs).reshape(N, max_childs)
+        for i in range(N - 1, -1, -1):
+            p = self.parents[i]
+            if p >= 0:
+                for j in range(max_childs):
+                    if C[p, j] == -1:
+                        C[p, j] = i
+                        break
+        return C
+
     def similarity(self, i, j):
         return TreeNode.similarity(self.nodes[i], self.nodes[j])
-
-
-def order_pairs(nodes):
-    """Given a list of fragments return pairs of equal nodes ordered in
-    such a way that if pair_1 comes before pair_2 then no element of pair_2 is
-    a descendant of pair_1"""
-    grouped = collections.defaultdict(list)
-    for i, node in enumerate(nodes):
-        grouped[node].append(i)
-    return sorted(
-        [pair
-         for node, indices in grouped.iteritems()
-         for pair in itertools.combinations_with_replacement(sorted(indices), 2)],
-        key=lambda x: x[0], reverse=True)
-
-
-def check_order(op, parents):
-    """Test for order_pairs"""
-    N = len(parents)
-    C = np.zeros((N, N), dtype=int)
-    for i, j in op:
-        pi = parents[i]
-        pj = parents[j]
-        if pi > 0 and pj > 0:
-            assert C[pi, pj] == 0
-        C[i, j] = 1
-
-
-def build_counts(ptree, max_depth=4, max_childs=20):
-    N = len(ptree)
-    if max_childs is None:
-        max_childs = N
-    pairs = order_pairs(ptree.nodes)
-    C = np.zeros((N, N, max_depth), dtype=float)
-    S = np.zeros((max_childs + 1, max_childs + 1, max_depth), dtype=float)
-    S[0, :, :] = S[:, 0, :] = 1
-    for i1, i2 in pairs:
-        ch1 = ptree.children(i1)
-        ch2 = ptree.children(i2)
-        if len(ch1) == 0 and len(ch2) == 0:
-            C[i2, i1, :] = C[i1, i2, :] = ptree.similarity(i1, i2)
-        else:
-            nc1 = min(len(ch1), max_childs)
-            nc2 = min(len(ch2), max_childs)
-            for j1 in range(1, nc1 + 1):
-                for j2 in range(1, nc2 + 1):
-                    S[j1, j2,  :]  = S[j1 - 1, j2    , :  ] +\
-                                     S[j1    , j2 - 1, :  ] -\
-                                     S[j1 - 1, j2 - 1, :  ]
-                    S[j1, j2, 1:] += S[j1 - 1, j2 - 1, :-1]*C[ch1[j1 - 1], ch2[j2 - 1], :-1]
-            C[i2, i1, :] = C[i1, i2, :] = \
-                        ptree.similarity(i1, i2)*S[nc1, nc2, :]
-    return C[:, :, max_depth - 1]
-
-
-def kernel(ptree, counts=None, max_depth=2, max_childs=20, decay=0.1):
-    if counts is None:
-        C = build_counts(ptree, max_depth, max_childs)
-    else:
-        C = counts
-    K = np.zeros(C.shape)
-    N = K.shape[0]
-    A = C.copy()
-    B = C.copy()
-    for i in range(N - 1, -1, -1):
-        pi = ptree.parents[i]
-        for j in range(N - 1, -1, -1):
-            pj = ptree.parents[j]
-            if pi > 0:
-                A[pi, j] += decay*A[i, j]
-            if pj > 0:
-                B[i, pj] += decay*B[i, j]
-    for i in range(N - 1, -1, -1):
-        pi = ptree.parents[i]
-        for j in range(N - 1, -1, -1):
-            ri = max(ptree.match[i], i)
-            rj = max(ptree.match[j], j)
-            K[i, j] += A[i, j] + B[i, j] - C[i, j]
-            pj = ptree.parents[j]
-            if pi > 0 and pj > 0:
-                K[pi, pj] += decay*K[i, j]
-    return K
 
 
 def to_rows(d):
@@ -254,3 +183,9 @@ def score_clusters(ptree, labels):
     scores = {k: sum(max(0, ptree.match[i] - i + 1) for i in v)
               for k, v in grp.iteritems()}
     return grp, scores
+
+
+# Import cython functions
+########################################################################
+build_counts = _ker.build_counts
+kernel = _ker.kernel
