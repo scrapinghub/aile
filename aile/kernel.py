@@ -1,10 +1,9 @@
 import collections
 import itertools
 
-import ete2
 import numpy as np
-import scrapely.htmlpage as hp
 import sklearn.cluster
+import scrapely.htmlpage as hp
 
 import aile.page_extractor as pe
 
@@ -255,33 +254,3 @@ def score_clusters(ptree, labels):
     scores = {k: sum(max(0, ptree.match[i] - i + 1) for i in v)
               for k, v in grp.iteritems()}
     return grp, scores
-
-
-def build_tree(ptree, labels=None):
-    root = ete2.Tree(name='root')
-    T = [ete2.Tree(name=(str(node) +'(' + str(i) + ')'))
-         for i, node in enumerate(ptree.nodes)]
-    if labels is not None:
-        for t, lab in zip(T, labels):
-            t.name += '{' + str(lab) + '}'
-    for i, p in enumerate(ptree.parents):
-        if p > 0:
-            T[p].add_child(T[i])
-        else:
-            root.add_child(T[i])
-    for t in root.traverse():
-        if not t.is_leaf():
-            t.add_face(ete2.TextFace(t.name), column=0, position='branch-top')
-    return root
-
-
-if __name__ == '__main__':
-#    page = hp.url_to_page('http://www.ebay.com/sch/Car-and-Truck-Tires/66471/bn_584423/i.html')
-#    page = hp.url_to_page('https://patchofland.com/investments.html')
-    page = hp.url_to_page('http://jobsearch.monster.co.uk/browse/?re=nv_gh_gnl1147_%2F')
-    page_tree = PageTree(page)
-
-    K = kernel(page_tree)
-    l = cluster(K)
-    g, s = score_clusters(page_tree, l)
-    t = build_tree(page_tree, labels=l)
