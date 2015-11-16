@@ -88,7 +88,7 @@ cpdef build_counts(ptree, int max_depth=4, int max_childs=20):
 
 
 @cython.boundscheck(False)
-cpdef kernel(ptree, counts=None, int max_depth=2, int max_childs=20, double decay=0.1):
+cpdef kernel(ptree, counts=None, int max_depth=2, int max_childs=20, double decay=0.5):
     cdef np.ndarray[np.double_t, ndim=2] C
     if counts is None:
         C = build_counts(ptree, max_depth, max_childs)

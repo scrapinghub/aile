@@ -1,19 +1,13 @@
 import collections
+import itertools
 
 import numpy as np
 import sklearn.cluster
 import scrapely.htmlpage as hp
+import networkx as nx
 
 import aile.page_extractor as pe
 import aile._kernel as _ker
-
-def jaccard_index(s1, s2, null_val=1.0):
-    """Compute Jaccard index between two sets"""
-    if s1 or s2:
-        I = float(len(s1 & s2))
-        return I / (len(s1) + len(s2) - I)
-    else:
-        return null_val
 
 
 def is_tag(fragment):
@@ -61,13 +55,6 @@ class TreeNode(object):
 
     def __repr__(self):
         return self.__str__()
-
-    @classmethod
-    def similarity(cls, a, b, no_class=1.0):
-        return jaccard_index(
-            frozenset([a.tag]) | a.class_attr,
-            frozenset([b.tag]) | b.class_attr,
-            no_class)
 
 
 def non_empty_text(page, fragment):
@@ -127,7 +114,7 @@ class PageTree(object):
         return len(self.index)
 
     def children(self, i):
-        return i + 1 + np.flatnonzero(self.parents[i+1:self.match[i]] == i)
+        return i + 1 + np.flatnonzero(self.parents[i+1:max(i+1, self.match[i])] == i)
 
     def children_matrix(self, max_childs=20):
         N = len(self.parents)
@@ -141,9 +128,28 @@ class PageTree(object):
                         break
         return C
 
-    def similarity(self, i1, i2):
-        return TreeNode.similarity(self.nodes[i1], self.nodes[i2])
+    def siblings(self, i):
+        p = self.parents[i]
+        if p != -1:
+            return self.children(p)
+        else:
+            return np.flatnonzero(self.parents == -1)
 
+    def all_paths(self, i):
+        paths = []
+        for j in range(i, max(i+1, self.match[i])):
+            p = j
+            path = []
+            while p >= i:
+                path.append(p)
+                p = self.parents[p]
+            paths.append(path)
+        return paths
+
+    def tree_size(self):
+        r = np.arange(len(self.match))
+        s = r + 1
+        return np.where(s > self.match, s, self.match) - r
 
 def to_rows(d):
     return np.tile(d, (len(d), 1))
@@ -164,24 +170,172 @@ def kernel_to_distance(K):
     return np.sqrt(to_rows(d) + to_cols(d) - 2*K)
 
 
-def kernel_to_radial_distance(K):
-    return -np.log(normalize_kernel(K))
+def tree_size_distance(page_tree):
+    s = page_tree.tree_size()
+    a = to_cols(s).astype(float)
+    b = to_rows(s).astype(float)
+    return np.abs(a - b)/(a + b)
 
 
-def cluster(K):
-    D = kernel_to_distance(normalize_kernel(K))
-    clt = sklearn.cluster.DBSCAN(eps=0.76, min_samples=8, metric='precomputed')
-    return clt.fit_predict(D)
+def cluster(page_tree, K, d1=1.0, d2=1.0, eps=0.76, min_samples=8):
+    clt = sklearn.cluster.DBSCAN(
+        eps=eps, min_samples=min_samples, metric='precomputed')
+    return clt.fit_predict(
+        d1*kernel_to_distance(normalize_kernel(K)) +
+        d2*tree_size_distance(page_tree))
 
 
-def score_clusters(ptree, labels):
-    grp = collections.defaultdict(list)
+def extract_trees(ptree, labels):
+    labels = labels.copy()
     for i, l in enumerate(labels):
-        grp[l].append(i)
-    grp = {k: np.array(v) for k, v in grp.iteritems()}
-    scores = {k: sum(max(0, ptree.match[i] - i + 1) for i in v)
-              for k, v in grp.iteritems()}
-    return grp, scores
+        if l != -1:
+            labels[i:max(i, ptree.match[i])] = l
+    scores = collections.defaultdict(int)
+    for i, l in enumerate(labels):
+        if l != -1:
+            scores[l] += max(0, ptree.match[i] - i + 1)
+    max_s, max_l = max((s, l) for (l, s) in scores.iteritems())
+    trees = []
+    i = 0
+    while i < len(labels):
+        children = ptree.children(i)
+        if np.any(labels[children] == max_l):
+            first = None
+            item = []
+            for c in children:
+                m = labels[c]
+                if m != -1:
+                    if first is None:
+                        first = m
+                    elif m == first:
+                        trees.append(item)
+                        item = []
+                    item.append(c)
+            if item:
+                trees.append(item)
+            i = ptree.match[i]
+        else:
+            i += 1
+    return trees
+
+
+def dtw(D):
+    m = D.shape[0]
+    n = D.shape[1]
+    DTW = np.zeros((m + 1, n + 1))
+    DTW[:, 0] = np.inf
+    DTW[0, :] = np.inf
+    DTW[0, 0] = 0
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            DTW[i, j] = D[i - 1, j - 1] + min(
+                DTW[i - 1, j    ],
+                DTW[i    , j - 1],
+                DTW[i - 1, j - 1])
+    return DTW
+
+
+def dtw_path(DTW):
+    m = DTW.shape[0] - 1
+    n = DTW.shape[1] - 1
+    i = m - 1
+    j = n - 1
+    s = np.zeros((m,), dtype=int)
+    t = np.zeros((n,), dtype=int)
+    while i >= 0 or j >= 0:
+        s[i] = j
+        t[j] = i
+        if DTW[i, j + 1] < DTW[i + 1, j]:
+            if DTW[i, j + 1] < DTW[i, j]:
+                i -= 1
+            else:
+                i -= 1
+                j -= 1
+        elif DTW[i + 1, j] < DTW[i, j]:
+            j -= 1
+        else:
+            i -= 1
+            j -= 1
+    return s, t
+
+
+def dtw_match_1(s, t, D):
+    s = s.copy()
+    for i, j in enumerate(s):
+        m = k = i
+        d = D[i, j]
+        while k < len(s) and s[k] == j:
+            if D[k, j] < d:
+                m = k
+                d = D[k, j]
+            k += 1
+        k = i
+        while k < len(s) and s[k] == j:
+            if k != m:
+                s[k] = -1
+            k += 1
+    return s
+
+
+def dtw_match_2(s, t, D):
+    return dtw_match_1(t, s, D.T)
+
+
+def extract_items(ptree, trees, labels):
+    all_paths = []
+    all_nodes = []
+    for tree in trees:
+        paths = []
+        nodes = []
+        for root in tree:
+            for path in ptree.all_paths(root):
+                paths.append(labels[path].tolist())
+                nodes.append(path[0])
+        all_paths.append(paths)
+        all_nodes.append(nodes)
+    G = nx.Graph()
+    for (p1, n1), (p2, n2) in itertools.combinations(
+            zip(all_paths, all_nodes), 2):
+        N1 = len(p1)
+        N2 = len(p2)
+        D = np.zeros((N1, N2))
+        for i in range(N1):
+            q1 = p1[i]
+            for j in range(N2):
+                q2 = p2[j]
+                D[i, j] = max(len(q1), len(q2))
+                for a, b in zip(q1, q2):
+                    if a != b:
+                        break
+                    D[i, j] -= 1
+        DTW = dtw(D)
+        a1, a2 = dtw_path(DTW)
+        m = dtw_match_1(a1, a2, D)
+        for i, j in enumerate(m):
+            if j != -1:
+                G.add_edge(n1[i], n2[j])
+
+    cliques = []
+    for K in nx.find_cliques(G):
+        if len(K) >= 0.5*len(trees):
+            cliques.append(K)
+    cliques.sort(reverse=True, key=lambda x: len(x))
+    node_to_clique = {}
+    for i, K in enumerate(cliques):
+        for node in K:
+            if node not in node_to_clique:
+                node_to_clique[node] = i
+    n_cols = max(node_to_clique.values()) + 1
+    items = np.zeros((len(trees), n_cols)) - 1
+    for i, tree in enumerate(trees):
+        children = []
+        for root in tree:
+            children += range(root, max(root + 1, ptree.match[root]))
+        for c in children:
+            col = node_to_clique.get(c)
+            if col:
+                items[i, col] = c
+    return items
 
 
 # Import cython functions
