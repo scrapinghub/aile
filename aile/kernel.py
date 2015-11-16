@@ -259,7 +259,7 @@ def dtw_path(DTW):
     return s, t
 
 
-def dtw_match_1(s, t, D):
+def dtw_match(s, t, D):
     s = s.copy()
     for i, j in enumerate(s):
         m = k = i
@@ -277,11 +277,42 @@ def dtw_match_1(s, t, D):
     return s
 
 
-def dtw_match_2(s, t, D):
-    return dtw_match_1(t, s, D.T)
+def path_distance(p1, p2):
+    N1 = len(p1)
+    N2 = len(p2)
+    D = np.zeros((N1, N2))
+    for i in range(N1):
+        q1 = p1[i]
+        for j in range(N2):
+            q2 = p2[j]
+            D[i, j] = max(len(q1), len(q2))
+            for a, b in zip(q1, q2):
+                if a != b:
+                    break
+                D[i, j] -= 1
+    return D
 
 
-def extract_items(ptree, trees, labels):
+def find_cliques(G, min_size):
+    cliques = []
+    for K in nx.find_cliques(G):
+        if len(K) >= min_size:
+            cliques.append(set(K))
+    cliques.sort(reverse=True, key=lambda x: len(x))
+    L = set()
+    for K in cliques:
+        K -= L
+        L |= K
+    cliques = [K for K in cliques if len(K) >= min_size]
+    node_to_clique = {}
+    for i, K in enumerate(cliques):
+        for node in K:
+            if node not in node_to_clique:
+                node_to_clique[node] = i
+    return node_to_clique
+
+
+def paths_and_nodes(ptree, trees, labels):
     all_paths = []
     all_nodes = []
     for tree in trees:
@@ -293,49 +324,53 @@ def extract_items(ptree, trees, labels):
                 nodes.append(path[0])
         all_paths.append(paths)
         all_nodes.append(nodes)
+    return all_paths, all_nodes
+
+
+def match_graph(all_paths, all_nodes):
     G = nx.Graph()
     for (p1, n1), (p2, n2) in itertools.combinations(
             zip(all_paths, all_nodes), 2):
-        N1 = len(p1)
-        N2 = len(p2)
-        D = np.zeros((N1, N2))
-        for i in range(N1):
-            q1 = p1[i]
-            for j in range(N2):
-                q2 = p2[j]
-                D[i, j] = max(len(q1), len(q2))
-                for a, b in zip(q1, q2):
-                    if a != b:
-                        break
-                    D[i, j] -= 1
+        D = path_distance(p1, p2)
         DTW = dtw(D)
         a1, a2 = dtw_path(DTW)
-        m = dtw_match_1(a1, a2, D)
+        m = dtw_match(a1, a2, D)
         for i, j in enumerate(m):
             if j != -1:
                 G.add_edge(n1[i], n2[j])
+    return G
 
-    cliques = []
-    for K in nx.find_cliques(G):
-        if len(K) >= 0.5*len(trees):
-            cliques.append(K)
-    cliques.sort(reverse=True, key=lambda x: len(x))
-    node_to_clique = {}
-    for i, K in enumerate(cliques):
-        for node in K:
-            if node not in node_to_clique:
-                node_to_clique[node] = i
+
+def align_items(ptree, trees, node_to_clique):
     n_cols = max(node_to_clique.values()) + 1
-    items = np.zeros((len(trees), n_cols)) - 1
+    items = np.zeros((len(trees), n_cols), dtype=int) - 1
     for i, tree in enumerate(trees):
-        children = []
         for root in tree:
-            children += range(root, max(root + 1, ptree.match[root]))
-        for c in children:
-            col = node_to_clique.get(c)
-            if col:
-                items[i, col] = c
+            for c in range(root, max(root + 1, ptree.match[root])):
+                try:
+                    items[i, node_to_clique[c]] = c
+                except KeyError:
+                    pass
     return items
+
+
+def extract_items(ptree, trees, labels):
+    return align_items(
+        ptree,
+        trees,
+        find_cliques(
+            match_graph(*paths_and_nodes(ptree, trees, labels)),
+            0.5*len(trees))
+    )
+
+
+class ItemExtract(object):
+    def __init__(self, page_tree):
+        self.page_tree = page_tree
+        self.kernel = kernel(page_tree)
+        self.labels = cluster(page_tree, self.kernel)
+        self.trees = extract_trees(page_tree, self.labels)
+        self.items = extract_items(page_tree, self.trees, self.labels)
 
 
 # Import cython functions

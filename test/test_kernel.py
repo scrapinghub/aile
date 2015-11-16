@@ -32,10 +32,7 @@ if __name__ == '__main__':
 
     t1 = time.clock()
     page_tree = ker.PageTree(page)
-    K = ker.kernel(page_tree)
-    l = ker.cluster(page_tree, K)
-    trees = ker.extract_trees(page_tree, l)
-    items = ker.extract_items(page_tree, trees, l)
+    ie = ker.ItemExtract(page_tree)
     print 'Total time: {0} seconds'.format(time.clock() - t1)
-    t = build_tree(page_tree, labels=l)
+    t = build_tree(page_tree, labels=ie.labels)
     t.show()
