@@ -3,7 +3,8 @@ import time
 import scrapely.htmlpage as hp
 import ete2
 
-import aile.kernel as ker
+import aile.kernel
+import aile.ptree
 
 
 def build_tree(ptree, labels=None):
@@ -31,8 +32,8 @@ if __name__ == '__main__':
     page = hp.url_to_page('https://news.ycombinator.com/')
 
     t1 = time.clock()
-    page_tree = ker.PageTree(page)
-    ie = ker.ItemExtract(page_tree)
+    page_tree = aile.ptree.PageTree(page)
+    ie = aile.kernel.ItemExtract(page_tree)
     print 'Total time: {0} seconds'.format(time.clock() - t1)
     t = build_tree(page_tree, labels=ie.labels)
     t.show()

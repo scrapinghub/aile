@@ -9,6 +9,7 @@ import sklearn.cluster
 
 import aile.util as util
 from aile.phmm import ProfileHMM
+from ptree import match_fragments
 
 
 IGNORE_TAGS_DEFAULT = {'b', 'br', 'em',
@@ -89,34 +90,6 @@ def encode_html(page, ignore_tags='default'):
         join_text(
             filter(lambda x: x[0] is not None,
                    [(convert(f), f) for f in page.parsed_body])))
-
-
-def match_fragments(fragments, max_backtrack=20):
-    """Find the closing fragment for every fragment.
-
-    Returns: an array with as many elements as fragments. If the
-    fragment has no closing pair then the array contains -1 at that position
-    otherwise it contains the index of the closing pair.
-    """
-    match = np.repeat(-1, len(fragments))
-    stack = []
-    for i, fragment in enumerate(fragments):
-        if isinstance(fragment, hp.HtmlTag):
-            if fragment.tag_type == hp.HtmlTagType.OPEN_TAG:
-                stack.append((i, fragment))
-            elif (fragment.tag_type == hp.HtmlTagType.CLOSE_TAG):
-                if max_backtrack is None:
-                    max_j = len(stack)
-                else:
-                    max_j = min(max_backtrack, len(stack))
-                for j in range(1, max_j + 1):
-                    last_i, last_tag = stack[-j]
-                    if (last_tag.tag == fragment.tag):
-                        match[last_i] = i
-                        match[i] = last_i
-                        stack[-j:] = []
-                        break
-    return match
 
 
 def build_tree(match):
