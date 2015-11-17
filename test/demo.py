@@ -40,7 +40,7 @@ def train_test(pattern, start, end):
             pattern.format(end + 1))
 
 
-def train_test_1(n_train=2):
+def train_test_1(n_train=1):
     return ('hn',
             train_test('https://news.ycombinator.com/news?p={0}', 1, n_train))
 
@@ -50,38 +50,45 @@ def train_test_2(n_train=1):
             train_test('https://patchofland.com/investments/page/{0}.html', 1, n_train))
 
 
-def train_test_3(n_train=6):
+def train_test_3(n_train=1):
     return ('ebay',
             train_test('http://www.ebay.com/sch/Tires-/66471/i.html?_pgn={0}', 1, n_train))
 
 
-def train_test_4(n_train=6):
+def train_test_4(n_train=1):
     return ('monster',
             train_test('http://jobsearch.monster.co.uk/browse/?pg={0}&re=nv_gh_gnl1147_%2F', 1, n_train))
 
 
-def train_test_5(n_train=3):
+def train_test_5(n_train=1):
     pattern = 'http://lambda-the-ultimate.org/node?from={0}'
     return ('lambda', ([pattern.format(i) for i in range(0, n_train*10, 10)],
                        pattern.format(n_train*10)))
 
 
-def train_test_6(n_train=3):
+def train_test_6(n_train=1):
     return ('arstechnica',
             train_test('http://arstechnica.com/page/{0}/', 1, n_train))
 
 
-def train_test_7(n_train=1):
+def train_test_7(n_train=5):
     return ('kickstarter',
             train_test(
                 'https://www.kickstarter.com/discover/advanced?state=live&category_id=16&woe_id=0&sort=popularity&seed=2410820&page={0}',
                 1, n_train))
 
 
-def train_test_8(n_train=5):
+def train_test_8(n_train=1):
     return ('milanuncios',
             train_test(
                 'http://www.milanuncios.com/motor/?pagina={0}',
+                1, n_train))
+
+
+def train_test_9(n_train=1):
+    return ('sunglasses',
+            train_test(
+                'http://www.asos.com/men/sunglasses/cat/pgecategory.aspx?cid=6519&via=top&r=3#parentID=-1&pge={0}&pgeSize=36&sort=-1',
                 1, n_train))
 
 
@@ -236,8 +243,13 @@ if __name__ == '__main__':
         train_test_5,
         train_test_6,
         train_test_7,
-        train_test_8
+        train_test_8,
+        train_test_9
     ]
 
-    n_test = int(sys.argv[1])
-    train, fr = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))
+    if len(sys.argv) == 1:
+        for i, test in enumerate(tests):
+            demo2(test(), out='demo-{0}'.format(i+1))
+    else:
+        n_test = int(sys.argv[1])
+        train, fr = demo2(tests[n_test-1](), out='demo-{0}'.format(n_test))
