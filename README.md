@@ -1,73 +1,51 @@
 # Automatic Item List Extracation
 
 This repository is a temporary container for experiments in automatic extraction of list and tables from web pages.
-At some later point I will merge the surviving algorithms either in [scrapely](https://github.com/scrapy/scrapely) 
+At some later point I will merge the surviving algorithms either in [scrapely](https://github.com/scrapy/scrapely)
 or [portia](https://github.com/scrapinghub/portia).
 
 I document my ideas and algorithms descriptions at [readthedocs](http://aile.readthedocs.org/en/latest/).
 
-The current approach is based on the HTML code of the page, treated as a stream of HTML tags as processed by 
-[scrapely](https://github.com/scrapy/scrapely). 
+The current approach is based on the HTML code of the page, treated as a stream of HTML tags as processed by
+[scrapely](https://github.com/scrapy/scrapely). An alternative approach would be to use also the web page
+rendering information ([this script](https://github.com/plafl/aile/blob/master/misc/visual.py) renders a tree
+of bounding boxes for each element).
 
-We are trying to auto-detect repeating patterns in the tags, not necessarily made of of *li*, *tr* or *td* tags.
-The problem of detecting repeating patterns in streams is known as *motif discovery* and most of the literature about it seems
-to be published in the field of genetics.
-
-Right now there are two algorithms: MEME and Profile HMM
-
-## Installation	
+## Installation
 	pip install -r requirements.txt
 	python setup.py develop
-	
-## MEME
-An initial and slow implementation of the [MEME](http://meme-suite.org/) algorithm, as described in the
-following papers:
 
-- Unsupervised learning of multiple motifs in biopolymers using
-  expectation maximization.
-  Bailey and Elkan, 1995
+## Algorithms
 
-- Fitting a mixture model by expectation maximization to discover
-  motifs in bipolymers.
-  Bailey and Elkan, 1994
+We are trying to auto-detect repeating patterns in the tags, not necessarily made of of *li*, *tr* or *td* tags.
 
-- The value of prior knowledge in discovering motifs with MEME.
-  Bailey and Elkan, 1995
+### Clustering trees with a measure of similarity
+The idea is to compute the distance between all subtrees in the web page and run a clustering algorithm with this distance matrix.
+For a web page of size N this can be achieved in time O(N^2). The current algorithm actually computes a kernel and from the kernel
+computes the distance. The algorithm is based on:
 
-The algorithm is run without almost any particular information about HTML, just that candidate subsequences should have a 
-balanced set of open/closing tags. In the future we could try to give more a priori probability to patterns starting with or containing list or table HTML tags.
+    Kernels for semi-structured data
+    Hisashi Kashima, Teruo Koyanagi
 
-### Running it    
-    python meme.py
-    
-It will download and automatically extract the repating patterns of [Hacker News](https://news.ycombinator.com/). It actually works. The elements extracted are the articles. They have the form:
+Once we compute the distance between all subtrees of the web page DBSCAN clustering is run using the distance matrix.
+The result is massaged a little more until you get the result.
 
-    <tr class='athing'>
-      <td align="right" valign="top" class="title"><span class="rank">29.</span></td>
+### Markov models
+The problem of detecting repeating patterns in streams is known as *motif discovery* and most of the literature about it seems
+to be published in the field of genetics. Inspired from this there is [a branch](https://github.com/plafl/aile/tree/markov_model)
+(MEME and Profile HMM algorithms).
 
-      <td>
-        <center>
-          <a id="up_10247910" href="vote?for=10247910&amp;dir=up&amp;goto=news" name=
-          "up_10247910"></a>
+The Markov model approach has the following problems right now:
 
-          <div class="votearrow" title="upvote"></div>
-        </center>
-      </td>
+- Requires several web pages for training, depending on the web page type
+- Training is performed using EM algorithm which requires several attempts until a good optimum is achieved
+- The number of hidden states is hard to determine. There are some heuristics applied that work partially
 
-      <td class="title"><a href=
-      "https://www.textplain.net/blog/2015/moving-to-freebsd/">Moving to FreeBSD</a>
-      <span class="sitebit comhead">(<a href="from?site=textplain.net"><span class=
-      "sitestr">textplain.net</span></a>)</span></td>
-    </tr>
+These problems are not unsurmountable (I think) but require a lot of work:
 
-    <tr>
-      <td colspan="2"></td>
-
-      <td class="subtext"><span class="score" id="score_10247910">35 points</span> by
-      <a href="user?id=vezzy-fnord">vezzy-fnord</a> <a href="item?id=10247910">7 hours
-      ago</a> | <a href="item?id=10247910">6 comments</a></td>
-    </tr>
-
-## Profile HMM
-The main limitation of MEME is that detected sequences must have fixed length, that is, if one element of the motif is deleted or if noise is introduced between two motif elements it will fail to match.
-This method is still work in progress and is being documented [here](http://aile.readthedocs.org/en/latest/notes.html)
+- Precision could be improved using [conditional random fields](https://en.wikipedia.org/wiki/Conditional_random_field).
+  These could alleviate the need for data.
+- Training can run greatly in parallel. This is actually already done using [joblib](https://pythonhosted.org/joblib/parallel.html)
+  in a single PC but it could be further improved using a cluster of computers
+- There are some papers about hidden state merging/splitting and even an
+  [infinite number of states](http://machinelearning.wustl.edu/mlpapers/paper_files/nips02-AA01.pdf)
