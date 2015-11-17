@@ -6,8 +6,9 @@ import sklearn.cluster
 import scrapely.htmlpage as hp
 import networkx as nx
 
-import aile.page_extractor as pe
-import aile._kernel as _ker
+import page_extractor as pe
+import _kernel as _ker
+import dtw
 
 
 def is_tag(fragment):
@@ -219,64 +220,6 @@ def extract_trees(ptree, labels):
     return trees
 
 
-def dtw(D):
-    m = D.shape[0]
-    n = D.shape[1]
-    DTW = np.zeros((m + 1, n + 1))
-    DTW[:, 0] = np.inf
-    DTW[0, :] = np.inf
-    DTW[0, 0] = 0
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            DTW[i, j] = D[i - 1, j - 1] + min(
-                DTW[i - 1, j    ],
-                DTW[i    , j - 1],
-                DTW[i - 1, j - 1])
-    return DTW
-
-
-def dtw_path(DTW):
-    m = DTW.shape[0] - 1
-    n = DTW.shape[1] - 1
-    i = m - 1
-    j = n - 1
-    s = np.zeros((m,), dtype=int)
-    t = np.zeros((n,), dtype=int)
-    while i >= 0 or j >= 0:
-        s[i] = j
-        t[j] = i
-        if DTW[i, j + 1] < DTW[i + 1, j]:
-            if DTW[i, j + 1] < DTW[i, j]:
-                i -= 1
-            else:
-                i -= 1
-                j -= 1
-        elif DTW[i + 1, j] < DTW[i, j]:
-            j -= 1
-        else:
-            i -= 1
-            j -= 1
-    return s, t
-
-
-def dtw_match(s, t, D):
-    s = s.copy()
-    for i, j in enumerate(s):
-        m = k = i
-        d = D[i, j]
-        while k < len(s) and s[k] == j:
-            if D[k, j] < d:
-                m = k
-                d = D[k, j]
-            k += 1
-        k = i
-        while k < len(s) and s[k] == j:
-            if k != m:
-                s[k] = -1
-            k += 1
-    return s
-
-
 def path_distance(p1, p2):
     N1 = len(p1)
     N2 = len(p2)
@@ -303,7 +246,7 @@ def find_cliques(G, min_size):
     for K in cliques:
         K -= L
         L |= K
-    cliques = [K for K in cliques if len(K) >= min_size]
+    cliques = [J for J in cliques if len(J) >= min_size]
     node_to_clique = {}
     for i, K in enumerate(cliques):
         for node in K:
@@ -332,9 +275,9 @@ def match_graph(all_paths, all_nodes):
     for (p1, n1), (p2, n2) in itertools.combinations(
             zip(all_paths, all_nodes), 2):
         D = path_distance(p1, p2)
-        DTW = dtw(D)
-        a1, a2 = dtw_path(DTW)
-        m = dtw_match(a1, a2, D)
+        DTW = dtw.from_distance(D)
+        a1, a2 = dtw.path(DTW)
+        m = dtw.match(a1, a2, D)
         for i, j in enumerate(m):
             if j != -1:
                 G.add_edge(n1[i], n2[j])
@@ -367,13 +310,9 @@ def extract_items(ptree, trees, labels):
 class ItemExtract(object):
     def __init__(self, page_tree):
         self.page_tree = page_tree
-        self.kernel = kernel(page_tree)
+        self.kernel = _ker.kernel(page_tree)
         self.labels = cluster(page_tree, self.kernel)
         self.trees = extract_trees(page_tree, self.labels)
         self.items = extract_items(page_tree, self.trees, self.labels)
-
-
-# Import cython functions
-########################################################################
-build_counts = _ker.build_counts
-kernel = _ker.kernel
+        self.item_fragments = np.where(
+            self.items > 0, page_tree.index[self.items], -1)
