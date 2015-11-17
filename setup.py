@@ -28,7 +28,6 @@ setup(
         'scikit-learn',
         'scrapely',
         'cython',
-        'networkx',
         'pandas'],
     test_requires = [
         'pomegranate'
