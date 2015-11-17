@@ -4,12 +4,6 @@ from Cython.Build import cythonize
 
 extra_compile_args = ["-O3"]
 extensions = [
-    Extension("aile.phmm", ["aile/phmm.pyx"],
-              extra_compile_args=extra_compile_args
-        ),
-    Extension("aile.hmm", ["aile/hmm.pyx"],
-              extra_compile_args=extra_compile_args
-        ),
     Extension("aile._kernel", ["aile/_kernel.pyx"],
               extra_compile_args=extra_compile_args
         ),
@@ -28,10 +22,6 @@ setup(
         'scikit-learn',
         'scrapely',
         'cython',
-        'networkx',
-        'pandas'],
-    test_requires = [
-        'pomegranate'
-    ],
+        'networkx'],
     ext_modules = cythonize(extensions)
 )
