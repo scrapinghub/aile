@@ -25,11 +25,13 @@ setup(
     install_requires = [
         'numpy',
         'scipy',
+        'scikit-learn',
         'scrapely',
-        'tabulate',
-        'selenium',
-        'pomegranate',
         'cython',
+        'networkx',
         'pandas'],
+    test_requires = [
+        'pomegranate'
+    ],
     ext_modules = cythonize(extensions)
 )
