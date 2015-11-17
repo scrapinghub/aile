@@ -10,12 +10,6 @@ extensions = [
     Extension("aile.hmm", ["aile/hmm.pyx"],
               extra_compile_args=extra_compile_args
         ),
-    Extension("aile._kernel", ["aile/_kernel.pyx"],
-              extra_compile_args=extra_compile_args
-        ),
-    Extension("aile.dtw", ["aile/dtw.pyx"],
-              extra_compile_args=extra_compile_args
-    ),
 ]
 
 setup(
