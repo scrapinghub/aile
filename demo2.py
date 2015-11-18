@@ -47,7 +47,7 @@ if __name__ == '__main__':
 
     print 'Downloading URL...',
     t1 = time.clock()
-    page = hp.url_to_page('https://news.ycombinator.com/')
+    page = hp.url_to_page(url)
     print 'done ({0}s)'.format(time.clock() - t1)
 
     print 'Extracting items...',
