@@ -15,6 +15,25 @@ of bounding boxes for each element).
 	pip install -r requirements.txt
 	python setup.py develop
 
+## Running
+If you want to have a feeling of how it works there are two demo scripts included in the repo.
+
+- demo1.py
+  Will annotate the HTML code of a web page, marking as red the lines that form part of the repeating item
+  and with a prefix number the field number inside the item. The output is written in the file 'annotated.html'.
+
+      python demo1.py https://news.ycombinator.com
+
+  ![annotated HTML](https://github.com/plafl/aile/blob/master/misc/demo1_img.png)
+
+- demo2.py
+  Will label, color and draw the HTML tree so that repeating elements are easy to see. The output is interactive
+  (requires PyQt4).
+
+      python demo2.py https://news.ycombinator.com
+
+  ![annotated tree](https://github.com/plafl/aile/blob/master/misc/demo2_img.png)
+
 ## Algorithms
 
 We are trying to auto-detect repeating patterns in the tags, not necessarily made of of *li*, *tr* or *td* tags.
