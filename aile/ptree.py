@@ -57,15 +57,15 @@ class TreeNode(object):
         return self.tag == other.tag
 
     def __str__(self):
-        s = self.tag
-        if self.class_attr:
-            s += '['
-            s += ','.join(self.class_attr)
-            s += ']'
-        return s
+        return self.__repr__().encode('ascii', 'backslashreplace')
 
     def __repr__(self):
-        return self.__str__()
+        s = unicode(self.tag)
+        if self.class_attr:
+            s += u'['
+            s += u','.join(self.class_attr)
+            s += u']'
+        return s
 
 
 def non_empty_text(page, fragment):
