@@ -89,9 +89,10 @@ def cluster(page_tree, K, d1=1.0, d2=1.0, eps=0.76, min_samples=4):
     """
     clt = sklearn.cluster.DBSCAN(
         eps=eps, min_samples=min_samples, metric='precomputed')
-    return clt.fit_predict(
-        d1*kernel_to_distance(normalize_kernel(K)) +
-        d2*tree_size_distance(page_tree))
+    D = d1*kernel_to_distance(normalize_kernel(K)) +\
+        d2*tree_size_distance(page_tree)
+    labels = clt.fit_predict(D)
+    return labels
 
 
 def extract_label(ptree, labels, label_to_extract):
@@ -286,6 +287,9 @@ def extract_items(ptree, trees, labels):
     )
 
 
+ItemTable = collections.namedtuple('ItemTable', ['roots', 'fields'])
+
+
 class ItemExtract(object):
     def __init__(self, page_tree,
                  k_max_depth=2, k_decay=0.5,
@@ -302,9 +306,9 @@ class ItemExtract(object):
         self.labels = cluster(page_tree, self.kernel,
                               d1=c_d1, d2=c_d2, eps=c_eps, min_samples=c_min_samples)
         self.trees = extract_trees(page_tree, self.labels)
-        self.items = [(t, extract_items(page_tree, t, self.labels))
+        self.items = [ItemTable(t, extract_items(page_tree, t, self.labels))
                       for (s, t) in self.trees]
         self.item_fragments = [
-            ([page_tree.fragment_index(np.array(root)) for root in t],
-             page_tree.fragment_index(i))
+            ItemTable([page_tree.fragment_index(np.array(root)) for root in t],
+                      page_tree.fragment_index(i))
             for t, i in self.items]
