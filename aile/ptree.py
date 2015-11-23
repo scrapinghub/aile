@@ -173,3 +173,8 @@ class PageTree(object):
         r = np.arange(len(self.match))
         s = r + 1
         return np.where(s > self.match, s, self.match) - r
+
+    def fragment_index(self, tree_index):
+        """Convert from tree node numbering to original fragment numbers"""
+        return np.where(
+            tree_index > 0, self.index[tree_index], -1)

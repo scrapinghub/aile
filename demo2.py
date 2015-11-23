@@ -55,7 +55,8 @@ if __name__ == '__main__':
 
     print 'Drawing HTML tree'
     labels = np.repeat(-1, len(ie.page_tree))
-    for i in range(ie.items.shape[0]):
-        for j in range(ie.items.shape[1]):
-            labels[ie.items[i, j]] = j
+    trees, items = ie.items[0]
+    for i in range(items.shape[0]):
+        for j in range(items.shape[1]):
+            labels[items[i, j]] = j
     draw_tree(ie.page_tree, labels)

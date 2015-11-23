@@ -88,7 +88,8 @@ if __name__ == '__main__':
 
     print 'Annotating HTML'
     labels = np.repeat(-1, len(ie.page_tree.page.parsed_body))
-    for i in range(ie.item_fragments.shape[0]):
-        for j in range(ie.item_fragments.shape[1]):
-            labels[ie.item_fragments[i, j]] = j
+    trees, items = ie.item_fragments[0]
+    for i in range(items.shape[0]):
+        for j in range(items.shape[1]):
+            labels[items[i, j]] = j
     annotate(ie.page_tree.page, labels)

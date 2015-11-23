@@ -118,19 +118,28 @@ def extract_label(ptree, labels, label_to_extract):
                         item = []
                     item.append(c)
             if item:
-                roots.append(item)
+                roots.append(tuple(item))
             i = ptree.match[i]
         else:
             i += 1
     return roots
 
 
-def filter_labels(ptree, labels):
+def filter_children_labels(ptree, labels):
     """Assign children the labels of their parents, if any"""
     labels = labels.copy()
     for i, l in enumerate(labels):
         if l != -1:
             labels[i:max(i, ptree.match[i])] = l
+    return labels
+
+
+def filter_extracted_labels(labels, extracted):
+    """Mark labels already extracted"""
+    labels = labels.copy()
+    for forest in extracted:
+        for root in forest:
+            labels[root] = -1
     return labels
 
 
@@ -143,7 +152,7 @@ def score_labels(ptree, labels):
     return scores
 
 
-def extract_trees(ptree, labels):
+def extract_trees(ptree, labels, min_n_trees=6):
     """Extract the repeating trees.
 
     We cannot use the cluster labels as is because:
@@ -156,10 +165,15 @@ def extract_trees(ptree, labels):
         2. If a node with that label has siblings, extract the siblings too,
            even if they have other labels.
     """
-    labels = filter_labels(ptree, labels)
+    labels = filter_children_labels(ptree, labels)
     scores = score_labels(ptree, labels)
-    max_s, max_l = max((s, l) for (l, s) in scores.iteritems())
-    return extract_label(ptree, labels, max_l)
+    trees = []
+    for l, s in sorted(scores.items(), key=lambda kv: kv[1], reverse=True):
+        t = extract_label(ptree, labels, l)
+        if len(t) >= min_n_trees:
+            trees.append((s, t))
+            labels = filter_extracted_labels(labels, t)
+    return trees
 
 
 def path_distance(path_1, path_2):
@@ -288,6 +302,9 @@ class ItemExtract(object):
         self.labels = cluster(page_tree, self.kernel,
                               d1=c_d1, d2=c_d2, eps=c_eps, min_samples=c_min_samples)
         self.trees = extract_trees(page_tree, self.labels)
-        self.items = extract_items(page_tree, self.trees, self.labels)
-        self.item_fragments = np.where(
-            self.items > 0, page_tree.index[self.items], -1)
+        self.items = [(t, extract_items(page_tree, t, self.labels))
+                      for (s, t) in self.trees]
+        self.item_fragments = [
+            ([page_tree.fragment_index(np.array(root)) for root in t],
+             page_tree.fragment_index(i))
+            for t, i in self.items]
