@@ -121,6 +121,12 @@ class PageTree(object):
         for i, m in enumerate(self.match):
             self.parents[i+1:m] = i
 
+        self.n_children = np.zeros((len(self.index,)), dtype=int)
+        for p in self.parents:
+            if p > -1:
+                self.n_children[p] += 1
+        self.max_childs = np.max(self.n_children)
+
     def __len__(self):
         """Number of nodes in tree"""
         return len(self.index)
@@ -129,9 +135,11 @@ class PageTree(object):
         """An array with the indices of the direct children of node 'i'"""
         return i + 1 + np.flatnonzero(self.parents[i+1:max(i+1, self.match[i])] == i)
 
-    def children_matrix(self, max_childs=20):
+    def children_matrix(self, max_childs=None):
         """A matrix of shape (len(tree), max_childs) where row 'i' contains the
         children of node 'i'"""
+        if max_childs is None:
+            max_childs = self.max_childs
         N = len(self.parents)
         C = np.repeat(-1, N*max_childs).reshape(N, max_childs)
         for i in range(N - 1, -1, -1):
@@ -151,11 +159,11 @@ class PageTree(object):
         else:
             return np.flatnonzero(self.parents == -1)
 
-    def prefix(self, i, stop_at=0):
+    def prefix(self, i, stop_at=-1):
         """A path from 'i' going upwards up to 'stop_at'"""
         path = []
         p = i
-        while p >= stop_at:
+        while p >= stop_at and p != -1:
             path.append(p)
             p = self.parents[p]
         return path
