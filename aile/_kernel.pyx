@@ -34,7 +34,7 @@ def check_order(op, parents):
         C[i, j] = 1
 
 
-def similarity(ptree):
+def similarity(ptree, max_items=4):
     all_classes = list({node.class_attr for node in ptree.nodes})
     class_index = {c: i for i, c in enumerate(all_classes)}
     class_map = np.array([class_index[node.class_attr] for node in ptree.nodes])
@@ -42,9 +42,9 @@ def similarity(ptree):
     similarity = np.zeros((N, N), dtype=float)
     for i in range(N):
         for j in range(N):
-            li = len(all_classes[i])
-            lj = len(all_classes[j])
-            lk = len(all_classes[i] & all_classes[j])
+            li = min(max_items, len(all_classes[i]))
+            lj = min(max_items, len(all_classes[j]))
+            lk = min(max_items, len(all_classes[i] & all_classes[j]))
             similarity[i, j] = (1.0 + lk)/(1.0 + li + lj - lk)
     return class_map, similarity
 
