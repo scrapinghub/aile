@@ -1,7 +1,5 @@
 import time
 import sys
-import codecs
-import cgi
 
 import scrapely.htmlpage as hp
 import numpy as np
@@ -22,7 +20,7 @@ def color_map(n_colors):
 
 def draw_tree(ptree, labels=None):
     root = ete2.Tree(name='root')
-    T = [ete2.Tree(name=(str(node)))
+    T = [ete2.Tree(name=(str(node) + '[' + str(i) + ']'))
          for i, node in enumerate(ptree.nodes)]
     if labels is not None:
         for t, lab in zip(T, labels):
