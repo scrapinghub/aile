@@ -194,7 +194,7 @@ def pairwise_path_distance(path_seq_1, path_seq_2):
 def extract_path_seq_1(ptree, labels, forest):
     paths = []
     for root in forest:
-        for path in ptree.all_paths(root):
+        for path in ptree.prefixes_at(root):
             paths.append((path[0], labels[path].tolist()))
     return paths
 

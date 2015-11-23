@@ -122,12 +122,16 @@ class PageTree(object):
             self.parents[i+1:m] = i
 
     def __len__(self):
+        """Number of nodes in tree"""
         return len(self.index)
 
     def children(self, i):
+        """An array with the indices of the direct children of node 'i'"""
         return i + 1 + np.flatnonzero(self.parents[i+1:max(i+1, self.match[i])] == i)
 
     def children_matrix(self, max_childs=20):
+        """A matrix of shape (len(tree), max_childs) where row 'i' contains the
+        children of node 'i'"""
         N = len(self.parents)
         C = np.repeat(-1, N*max_childs).reshape(N, max_childs)
         for i in range(N - 1, -1, -1):
@@ -140,24 +144,32 @@ class PageTree(object):
         return C
 
     def siblings(self, i):
+        """Siblings of node 'i'"""
         p = self.parents[i]
         if p != -1:
             return self.children(p)
         else:
             return np.flatnonzero(self.parents == -1)
 
-    def all_paths(self, i):
+    def prefix(self, i, stop_at=0):
+        """A path from 'i' going upwards up to 'stop_at'"""
+        path = []
+        p = i
+        while p >= stop_at:
+            path.append(p)
+            p = self.parents[p]
+        return path
+
+    def prefixes_at(self, i):
+        """A list of paths going upwards that start at a descendant of 'i' and
+        end at a 'i'"""
         paths = []
         for j in range(i, max(i+1, self.match[i])):
-            p = j
-            path = []
-            while p >= i:
-                path.append(p)
-                p = self.parents[p]
-            paths.append(path)
+            paths.append(self.prefix(j, i))
         return paths
 
     def tree_size(self):
+        """Return an array where the i-th entry is the size of subtree 'i'"""
         r = np.arange(len(self.match))
         s = r + 1
         return np.where(s > self.match, s, self.match) - r
