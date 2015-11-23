@@ -70,7 +70,7 @@ def tree_size_distance(page_tree):
     return np.abs(a - b)/(a + b)
 
 
-def cluster(page_tree, K, d1=1.0, d2=1.0, eps=0.76, min_samples=8):
+def cluster(page_tree, K, d1=1.0, d2=1.0, eps=0.76, min_samples=4):
     """Asign to each node in the tree a cluster label.
 
     It runs the DBSCAN algorithm with a distance matrix which is a
@@ -94,6 +94,55 @@ def cluster(page_tree, K, d1=1.0, d2=1.0, eps=0.76, min_samples=8):
         d2*tree_size_distance(page_tree))
 
 
+def extract_label(ptree, labels, label_to_extract):
+    """Extract all forests inside the labeled PageTree that are marked or have
+    a sibling that is marked with label_to_extract.
+
+    Returns: a list of tuples, where each tuple are the roots of the extracted
+    subtrees.
+    """
+    roots = []
+    i = 0
+    while i < len(labels):
+        children = ptree.children(i)
+        if np.any(labels[children] == label_to_extract):
+            first = None
+            item = []
+            for c in children:
+                m = labels[c]
+                if m != -1:
+                    if first is None:
+                        first = m
+                    elif m == first:
+                        roots.append(tuple(item))
+                        item = []
+                    item.append(c)
+            if item:
+                roots.append(item)
+            i = ptree.match[i]
+        else:
+            i += 1
+    return roots
+
+
+def filter_labels(ptree, labels):
+    """Assign children the labels of their parents, if any"""
+    labels = labels.copy()
+    for i, l in enumerate(labels):
+        if l != -1:
+            labels[i:max(i, ptree.match[i])] = l
+    return labels
+
+
+def score_labels(ptree, labels):
+    """Assign an score for each label"""
+    scores = collections.defaultdict(int)
+    for i, l in enumerate(labels):
+        if l != -1:
+            scores[l] += max(0, ptree.match[i] - i + 1)
+    return scores
+
+
 def extract_trees(ptree, labels):
     """Extract the repeating trees.
 
@@ -107,37 +156,10 @@ def extract_trees(ptree, labels):
         2. If a node with that label has siblings, extract the siblings too,
            even if they have other labels.
     """
-    labels = labels.copy()
-    for i, l in enumerate(labels):
-        if l != -1:
-            labels[i:max(i, ptree.match[i])] = l
-    scores = collections.defaultdict(int)
-    for i, l in enumerate(labels):
-        if l != -1:
-            scores[l] += max(0, ptree.match[i] - i + 1)
+    labels = filter_labels(ptree, labels)
+    scores = score_labels(ptree, labels)
     max_s, max_l = max((s, l) for (l, s) in scores.iteritems())
-    trees = []
-    i = 0
-    while i < len(labels):
-        children = ptree.children(i)
-        if np.any(labels[children] == max_l):
-            first = None
-            item = []
-            for c in children:
-                m = labels[c]
-                if m != -1:
-                    if first is None:
-                        first = m
-                    elif m == first:
-                        trees.append(item)
-                        item = []
-                    item.append(c)
-            if item:
-                trees.append(item)
-            i = ptree.match[i]
-        else:
-            i += 1
-    return trees
+    return extract_label(ptree, labels, max_l)
 
 
 def path_distance(path_1, path_2):
@@ -254,7 +276,7 @@ class ItemExtract(object):
     def __init__(self, page_tree,
                  k_max_depth=2, k_decay=0.5,
                  c_d1=1.0, c_d2=1.0,
-                 c_eps=0.76, c_min_samples=8):
+                 c_eps=0.76, c_min_samples=6):
         """Perform all extraction operations in sequence.
 
         Parameters:
