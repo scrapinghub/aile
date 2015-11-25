@@ -79,10 +79,10 @@ cpdef build_counts(ptree, int max_depth=4, int max_childs=20):
                     k2 = children[i2, j2 - 1]
                     if k2 < 0:
                         break
-                    S[j1, j2,  :]  = S[j1 - 1, j2    , :  ] +\
-                                     S[j1    , j2 - 1, :  ] -\
-                                     S[j1 - 1, j2 - 1, :  ]
-                    S[j1, j2, 1:] += S[j1 - 1, j2 - 1, :-1]*C[k1, k2, :-1]
+                    S[j1, j2,  :]  = S[j1 - 1, j2    , : ] +\
+                                     S[j1    , j2 - 1, : ] -\
+                                     S[j1 - 1, j2 - 1, : ]
+                    S[j1, j2, 1:] += S[j1 - 1, j2 - 1, 1:]*C[k1, k2, :-1]
             C[i2, i1, :] = C[i1, i2, :] = s*S[j1 - 1, j2 - 1, :]
     return C[:, :, max_depth - 1]
 
