@@ -70,29 +70,42 @@ def tree_size_distance(page_tree):
     return np.abs(a - b)/(a + b)
 
 
-def cluster(page_tree, K, d1=1.0, d2=1.0, eps=0.76, min_samples=4):
+class KNNClustering(object):
+    def __init__(self, k=None):
+        self.k = k
+        # To be fitted
+        self.clusters = None
+        self.X = None
+        self.labels = None
+
+    def fit_predict(self, X, min_cluster_size=6):
+        if self.k is None:
+            self.k = int(np.sqrt(X.shape[0]))
+        self.X = X
+        G = nx.Graph()
+        for i, j in zip(*np.nonzero(X == 0)):
+            G.add_edge(i, j)
+        K = sklearn.neighbors.kneighbors_graph(X, self.k + 1)
+        for i, j in zip(*K.nonzero()):
+            if K[j, i] == 1 and i != j:
+                G.add_edge(i, j)
+        self.clusters = [component
+                         for component in nx.connected_components(G)
+                         if len(component) >= min_cluster_size]
+        self.labels = np.repeat(-1, X.shape[0])
+        for i, c in enumerate(self.clusters):
+            for j in c:
+                self.labels[j] = i
+        return self.labels
+
+
+def cluster(page_tree, K):
     """Asign to each node in the tree a cluster label.
-
-    It runs the DBSCAN algorithm with a distance matrix which is a
-    linear combination:
-
-        D = d1*D1 + d2*D2
-
-    Where:
-        D1 is the distance matrix from kernel K and
-        D2 is the distance matrix from subtree sizes
-
-    eps and min_samples are passed to DBSCAN as is
 
     Returns: for each node a label id. Label ID -1 means that the node
     is an outlier (it isn't part of any cluster).
     """
-    clt = sklearn.cluster.DBSCAN(
-        eps=eps, min_samples=min_samples, metric='precomputed')
-    D = d1*kernel_to_distance(normalize_kernel(K)) +\
-        d2*tree_size_distance(page_tree)
-    labels = clt.fit_predict(D)
-    return labels
+    return KNNClustering().fit_predict(kernel_to_distance(K))
 
 
 def extract_label(ptree, labels, label_to_extract):
@@ -291,10 +304,7 @@ ItemTable = collections.namedtuple('ItemTable', ['roots', 'fields'])
 
 
 class ItemExtract(object):
-    def __init__(self, page_tree,
-                 k_max_depth=2, k_decay=0.5,
-                 c_d1=1.0, c_d2=1.0,
-                 c_eps=0.76, c_min_samples=6):
+    def __init__(self, page_tree, k_max_depth=4, k_decay=0.5):
         """Perform all extraction operations in sequence.
 
         Parameters:
@@ -303,8 +313,7 @@ class ItemExtract(object):
         """
         self.page_tree = page_tree
         self.kernel = _ker.kernel(page_tree, max_depth=k_max_depth, decay=k_decay)
-        self.labels = cluster(page_tree, self.kernel,
-                              d1=c_d1, d2=c_d2, eps=c_eps, min_samples=c_min_samples)
+        self.labels = cluster(page_tree, self.kernel)
         self.trees = extract_trees(page_tree, self.labels)
         self.items = [ItemTable(t, extract_items(page_tree, t, self.labels))
                       for (s, t) in self.trees]

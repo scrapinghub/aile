@@ -54,9 +54,4 @@ if __name__ == '__main__':
     print 'done ({0}s)'.format(time.clock() - t1)
 
     print 'Drawing HTML tree'
-    labels = np.repeat(-1, len(ie.page_tree))
-    trees, items = ie.items[0]
-    for i in range(items.shape[0]):
-        for j in range(items.shape[1]):
-            labels[items[i, j]] = j
-    draw_tree(ie.page_tree, labels)
+    draw_tree(ie.page_tree, ie.labels)
