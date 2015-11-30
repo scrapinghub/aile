@@ -70,34 +70,87 @@ def tree_size_distance(page_tree):
     return np.abs(a - b)/(a + b)
 
 
-class KNNClustering(object):
-    def __init__(self, k=None):
-        self.k = k
-        # To be fitted
-        self.clusters = None
-        self.X = None
-        self.labels = None
+def cut_descendants(G, page_tree):
+    for src in G.nodes_iter():
+        m = page_tree.match[src]
+        if m >= 0:
+            for tgt in range(src+1, m):
+                if tgt in G:
+                    try:
+                        for cut_edge in nx.minimum_edge_cut(G, src, tgt):
+                            G.remove_edge(*cut_edge)
+                    except nx.NetworkXUnbounded:
+                        print 'Could not separate: ', src, tgt
+    return nx.connected_components(G)
 
-    def fit_predict(self, X, min_cluster_size=6):
-        if self.k is None:
-            self.k = int(np.sqrt(X.shape[0]))
-        self.X = X
-        G = nx.Graph()
-        for i, j in zip(*np.nonzero(X == 0)):
-            G.add_edge(i, j)
-        K = sklearn.neighbors.kneighbors_graph(X, self.k + 1)
-        for i, j in zip(*K.nonzero()):
-            if K[j, i] == 1 and i != j:
-                G.add_edge(i, j)
-        self.clusters = [component
-                         for component in nx.connected_components(G)
-                         if len(component) >= min_cluster_size]
-        self.labels = np.repeat(-1, X.shape[0])
-        for i, c in enumerate(self.clusters):
-            for j in c:
-                self.labels[j] = i
+
+def labels_to_clusters(labels):
+    return [np.flatnonzero(labels==label) for label in np.unique(labels)
+            if label != -1]
+
+
+def clusters_to_labels(clusters, n_samples):
+    labels = np.repeat(-1, n_samples)
+    for i, c in enumerate(clusters):
+        for j in c:
+            labels[j] = i
+    return labels
+
+
+def boost(d, k=2):
+    return 1 - (1 - d)**k
+
+
+class TreeClustering(object):
+    def __init__(self, page_tree):
+        self.page_tree = page_tree
+
+    def fit_predict(self, X, min_cluster_size=6,
+                    separate_descendants=False):
+        D = X.copy() + boost(tree_size_distance(self.page_tree), 4)
+        clt = sklearn.cluster.DBSCAN(
+            eps=1.0, min_samples=min_cluster_size, metric='precomputed')
+        self.clusters = []
+        for c in labels_to_clusters(clt.fit_predict(D)):
+            if len(c) >= min_cluster_size:
+                if separate_descendants:
+                    self.clusters += cut_descendants(
+                        self.neighbors(D, c), self.page_tree)
+                else:
+                    self.clusters.append(c)
+        self.labels = clusters_to_labels(self.clusters, D.shape[0])
         return self.labels
 
+    def neighbors(self, D, nodes=None, k=50):
+        if nodes is None:
+            nodes = np.arange(D.shape[0])
+        E = D[nodes,:][:,nodes]
+        k = min(k+1, len(nodes))
+        K = np.argsort(E, axis=1)
+        G = nx.Graph()
+        for i in range(K.shape[0]):
+            ni = nodes[i]
+            pi = self.page_tree.parents[ni]
+            if pi != -1:
+                for j in range(i+1, K.shape[0]):
+                    nj = nodes[j]
+                    pj = self.page_tree.parents[nj]
+                    if pj == pi:
+                        G.add_edge(
+                            min(ni, nj), max(ni, nj),
+                            capacity=1.0/(np.sqrt(2) + 1 - E[i, j]))
+            p = q = 0
+            while p < K.shape[1] and q < k:
+                j = K[i, p]
+                nj = nodes[j]
+                if E[i, j] == 0:
+                    cap = np.inf
+                else:
+                    cap = 1.0/(np.sqrt(2) + 1 - E[i, j])
+                    q += 1
+                G.add_edge(min(ni, nj), max(ni, nj), capacity=cap)
+                p += 1
+        return G
 
 def cluster(page_tree, K):
     """Asign to each node in the tree a cluster label.
@@ -105,7 +158,8 @@ def cluster(page_tree, K):
     Returns: for each node a label id. Label ID -1 means that the node
     is an outlier (it isn't part of any cluster).
     """
-    return KNNClustering().fit_predict(kernel_to_distance(K))
+    return TreeClustering(page_tree).fit_predict(
+        kernel_to_distance(normalize_kernel(K)))
 
 
 def extract_label(ptree, labels, label_to_extract):
@@ -304,7 +358,7 @@ ItemTable = collections.namedtuple('ItemTable', ['roots', 'fields'])
 
 
 class ItemExtract(object):
-    def __init__(self, page_tree, k_max_depth=4, k_decay=0.5):
+    def __init__(self, page_tree, k_max_depth=2, k_decay=0.5):
         """Perform all extraction operations in sequence.
 
         Parameters:

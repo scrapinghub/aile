@@ -186,3 +186,7 @@ class PageTree(object):
         """Convert from tree node numbering to original fragment numbers"""
         return np.where(
             tree_index > 0, self.index[tree_index], -1)
+
+    def is_descendant(self, parent, descendant):
+        return descendant >= parent and \
+            descendant < max(parent + 1, self.match[parent])
