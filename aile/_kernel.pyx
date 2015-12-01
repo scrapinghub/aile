@@ -8,6 +8,7 @@ import numpy as np
 cimport numpy as np
 cimport cython
 
+
 def order_pairs(nodes):
     """Given a list of fragments return pairs of equal nodes ordered in
     such a way that if pair_1 comes before pair_2 then no element of pair_2 is
@@ -34,7 +35,7 @@ def check_order(op, parents):
         C[i, j] = 1
 
 
-def similarity(ptree, max_items=4):
+def similarity(ptree, max_items=2):
     all_classes = list({node.class_attr for node in ptree.nodes})
     class_index = {c: i for i, c in enumerate(all_classes)}
     class_map = np.array([class_index[node.class_attr] for node in ptree.nodes])
@@ -88,7 +89,7 @@ cpdef build_counts(ptree, int max_depth=4, int max_childs=20):
 
 
 @cython.boundscheck(False)
-cpdef kernel(ptree, counts=None, int max_depth=2, int max_childs=20, double decay=0.5):
+cpdef kernel(ptree, counts=None, int max_depth=4, int max_childs=20, double decay=0.5):
     cdef np.ndarray[np.double_t, ndim=2] C
     if counts is None:
         C = build_counts(ptree, max_depth, max_childs)
@@ -118,3 +119,17 @@ cpdef kernel(ptree, counts=None, int max_depth=2, int max_childs=20, double deca
             if pi > 0 and pj > 0:
                 K[pi, pj] += decay*K[i, j]
     return K
+
+
+cpdef min_dist_complete(np.ndarray[np.double_t, ndim=2] D):
+    cdef np.ndarray[np.double_t, ndim=2] R = D.copy()
+    cdef int N = D.shape[0]
+    cdef int i, j, k
+    cdef double d
+    for k in range(N):
+        for i in range(N):
+            for j in range(N):
+                d = max(R[i, k], R[k, j])
+                if R[i,j] > d:
+                    R[i, j] = d
+    return R

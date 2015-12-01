@@ -50,7 +50,9 @@ def kernel_to_distance(K):
         |u - v|^2 = (u - v)(u - v) = u^2 + v^2 - 2uv
     """
     d = np.diag(K)
-    return np.sqrt(to_rows(d) + to_cols(d) - 2*K)
+    D = to_rows(d) + to_cols(d) - 2*K
+    D[D < 0] = 0.0 # numerical error can make D go a little below 0
+    return np.sqrt(D)
 
 
 def tree_size_distance(page_tree):
@@ -70,26 +72,50 @@ def tree_size_distance(page_tree):
     return np.abs(a - b)/(a + b)
 
 
-def cut_descendants(G, page_tree):
-    for src in G.nodes_iter():
+def must_separate(nodes, page_tree):
+    """Given a sequence of nodes and a PageTree return a list of pairs
+    of nodes such that one is the ascendant/descendant of the other"""
+    separate = []
+    for src in nodes:
         m = page_tree.match[src]
         if m >= 0:
             for tgt in range(src+1, m):
-                if tgt in G:
-                    try:
-                        for cut_edge in nx.minimum_edge_cut(G, src, tgt):
-                            G.remove_edge(*cut_edge)
-                    except nx.NetworkXUnbounded:
-                        print 'Could not separate: ', src, tgt
-    return nx.connected_components(G)
+                if tgt in nodes:
+                    separate.append((src, tgt))
+    return separate
+
+
+def cut_descendants(D, nodes, page_tree):
+    """Given the distance matrix D, a set of nodes and a PageTree
+    perform a multicut of the complete graph of nodes separating
+    the nodes that are descendant/ascendants of each other according to the
+    PageTree"""
+    index = {node: i for i, node in enumerate(nodes)}
+    separate = [(index[i], index[j])
+                for i, j in must_separate(nodes, page_tree)]
+    if separate:
+        D = D[nodes, :][:, nodes].copy()
+        for i, j in separate:
+            D[i, j] = D[j, i] = np.inf
+        E = _ker.min_dist_complete(D)
+        eps = min(E[i,j] for i, j in separate)
+        components = nx.connected_components(
+            nx.Graph((nodes[i], nodes[j])
+                     for (i, j) in zip(*np.nonzero(E < eps))))
+    else:
+        components = [nodes]
+    return components
 
 
 def labels_to_clusters(labels):
+    """Given a an assignment of cluster label to each item return the a list
+    of sets, where each set is a cluster"""
     return [np.flatnonzero(labels==label) for label in np.unique(labels)
             if label != -1]
 
 
 def clusters_to_labels(clusters, n_samples):
+    """Given a list with clusters label each item"""
     labels = np.repeat(-1, n_samples)
     for i, c in enumerate(clusters):
         for j in c:
@@ -98,6 +124,7 @@ def clusters_to_labels(clusters, n_samples):
 
 
 def boost(d, k=2):
+    """Given a distance between 0 and 1 make it more nonlinear"""
     return 1 - (1 - d)**k
 
 
@@ -105,17 +132,17 @@ class TreeClustering(object):
     def __init__(self, page_tree):
         self.page_tree = page_tree
 
-    def fit_predict(self, X, min_cluster_size=6,
-                    separate_descendants=False):
-        D = X.copy() + boost(tree_size_distance(self.page_tree), 4)
+    def fit_predict(self, X, min_cluster_size=6, d1=1.0, d2=0.1, eps=1.2,
+                    separate_descendants=True):
+        D = d1*X.copy() + d2*boost(tree_size_distance(self.page_tree), 2)
         clt = sklearn.cluster.DBSCAN(
-            eps=1.0, min_samples=min_cluster_size, metric='precomputed')
+            eps=eps, min_samples=min_cluster_size, metric='precomputed')
         self.clusters = []
         for c in labels_to_clusters(clt.fit_predict(D)):
             if len(c) >= min_cluster_size:
                 if separate_descendants:
-                    self.clusters += cut_descendants(
-                        self.neighbors(D, c), self.page_tree)
+                    self.clusters += filter(lambda x: len(x) >= min_cluster_size,
+                                            cut_descendants(D, c, self.page_tree))
                 else:
                     self.clusters.append(c)
         self.labels = clusters_to_labels(self.clusters, D.shape[0])
@@ -152,14 +179,46 @@ class TreeClustering(object):
                 p += 1
         return G
 
-def cluster(page_tree, K):
+
+def cluster(page_tree, K, eps=1.2, d1=1.0, d2=0.1):
     """Asign to each node in the tree a cluster label.
 
     Returns: for each node a label id. Label ID -1 means that the node
     is an outlier (it isn't part of any cluster).
     """
     return TreeClustering(page_tree).fit_predict(
-        kernel_to_distance(normalize_kernel(K)))
+        kernel_to_distance(normalize_kernel(K)),
+        eps=eps, d1=d1, d2=d2,
+        separate_descendants=True)
+
+
+def label_covering(ptree, labels):
+    A = np.zeros((ptree.n_nodes, np.max(labels) + 1), dtype=int)
+    for i in range(ptree.n_nodes - 1, -1, -1):
+        l = labels[i]
+        if l != -1:
+            A[i, l] = 1
+        p = ptree.parents[i]
+        if p != -1:
+            A[p, :] += A[i, :]
+    for i in range(ptree.n_nodes - 1, -1, -1):
+        l = labels[i]
+        if l != -1:
+            p = ptree.parents[i]
+            if p != -1:
+                m = labels[p]
+                if m != -1:
+                    A[p, m] += A[i, l]
+    return A
+
+
+def entropy(P):
+    N = P > 0
+    T = P.sum(axis=1).astype(float)
+    S = np.zeros((P.shape[0],))
+    for i in range(P.shape[0]):
+        S[i] = -np.sum(P[i, N[i,:]]/T[i]*np.log(P[i, N[i,:]]/T[i]))
+    return S
 
 
 def extract_label(ptree, labels, label_to_extract):
@@ -273,20 +332,29 @@ def pairwise_path_distance(path_seq_1, path_seq_2):
     return D
 
 
-def extract_path_seq_1(ptree, labels, forest):
+def extract_path_seq_1(ptree, forest):
     paths = []
     for root in forest:
         for path in ptree.prefixes_at(root):
-            paths.append((path[0], labels[path].tolist()))
+            paths.append((path[0], path))
     return paths
 
 
-def extract_path_seq(ptree, trees, labels):
+def extract_path_seq(ptree, trees):
     all_paths = []
     for tree in trees:
-        paths = extract_path_seq_1(ptree, labels, tree)
+        paths = extract_path_seq_1(ptree, tree)
         all_paths.append(paths)
     return all_paths
+
+
+def map_paths_1(func, paths):
+    return [(leaf, [func(node) for node in path])
+            for leaf, path in paths]
+
+
+def map_paths(func, paths):
+    return [map_paths_1(func, path_set) for path_set in paths]
 
 
 def find_cliques(G, min_size):
@@ -349,7 +417,8 @@ def extract_items(ptree, trees, labels):
         ptree,
         trees,
         find_cliques(
-            match_graph(extract_path_seq(ptree, trees, labels)),
+            match_graph(map_paths(
+                lambda x: labels[x], extract_path_seq(ptree, trees))),
             0.5*len(trees))
     )
 
@@ -358,7 +427,8 @@ ItemTable = collections.namedtuple('ItemTable', ['roots', 'fields'])
 
 
 class ItemExtract(object):
-    def __init__(self, page_tree, k_max_depth=2, k_decay=0.5):
+    def __init__(self, page_tree, k_max_depth=2, k_decay=0.5,
+                 c_eps=1.2, c_d1=1.0, c_d2=0.1):
         """Perform all extraction operations in sequence.
 
         Parameters:
@@ -367,7 +437,7 @@ class ItemExtract(object):
         """
         self.page_tree = page_tree
         self.kernel = _ker.kernel(page_tree, max_depth=k_max_depth, decay=k_decay)
-        self.labels = cluster(page_tree, self.kernel)
+        self.labels = cluster(page_tree, self.kernel, eps=c_eps, d1=c_d1, d2=c_d2)
         self.trees = extract_trees(page_tree, self.labels)
         self.items = [ItemTable(t, extract_items(page_tree, t, self.labels))
                       for (s, t) in self.trees]
@@ -375,3 +445,15 @@ class ItemExtract(object):
             ItemTable([page_tree.fragment_index(np.array(root)) for root in t],
                       page_tree.fragment_index(i))
             for t, i in self.items]
+
+        self.counts = np.ones((self.page_tree.n_nodes,), dtype=int)
+        for i in range(self.page_tree.n_nodes):
+            children = self.page_tree.children(i)
+            children_counts = collections.Counter(
+                self.labels[i] for c in children if self.labels[i] != -1)
+            for c in children:
+                label = self.labels[i]
+                if label != -1:
+                    self.counts[c] = children_counts[label]
+                else:
+                    self.counts[c] = 1

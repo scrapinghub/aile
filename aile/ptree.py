@@ -1,3 +1,5 @@
+import collections
+
 import numpy as np
 import scrapely.htmlpage as hp
 
@@ -97,12 +99,13 @@ class PageTree(object):
         self.page = page
         index, self.nodes = zip(*tree_nodes(page))
         self.index = np.array(index)
+        self.n_nodes = len(self.nodes)
         reverse_index = np.repeat(-1, len(page.parsed_body))
         for i, idx in enumerate(self.index):
             reverse_index[idx] = i
         match = match_fragments(page.parsed_body)
-        self.match = np.repeat(-1, len(self.index))
-        self.parents = np.repeat(-1, len(self.index))
+        self.match = np.repeat(-1, self.n_nodes)
+        self.parents = np.repeat(-1, self.n_nodes)
         for i, m in enumerate(match):
             j = reverse_index[i]
             if j >= 0:
@@ -121,7 +124,7 @@ class PageTree(object):
         for i, m in enumerate(self.match):
             self.parents[i+1:m] = i
 
-        self.n_children = np.zeros((len(self.index,)), dtype=int)
+        self.n_children = np.zeros((self.n_nodes,), dtype=int)
         for p in self.parents:
             if p > -1:
                 self.n_children[p] += 1
@@ -190,3 +193,9 @@ class PageTree(object):
     def is_descendant(self, parent, descendant):
         return descendant >= parent and \
             descendant < max(parent + 1, self.match[parent])
+
+    def common_ascendant(self, nodes):
+        s = set(range(self.n_nodes))
+        for node in nodes:
+            s &= set(self.prefix(node))
+        return max(s)
