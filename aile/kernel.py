@@ -132,9 +132,12 @@ class TreeClustering(object):
     def __init__(self, page_tree):
         self.page_tree = page_tree
 
-    def fit_predict(self, X, min_cluster_size=6, d1=1.0, d2=0.1, eps=1.2,
+    def fit_predict(self, X, min_cluster_size=6, d1=1.0, d2=0.1, eps=1.0,
                     separate_descendants=True):
-        D = d1*X.copy() + d2*boost(tree_size_distance(self.page_tree), 2)
+        dd = float(d1 + d2)
+        d1 /= dd
+        d2 /= dd
+        D = d1*X + d2*boost(tree_size_distance(self.page_tree), 2)
         clt = sklearn.cluster.DBSCAN(
             eps=eps, min_samples=min_cluster_size, metric='precomputed')
         self.clusters = []
@@ -192,33 +195,20 @@ def cluster(page_tree, K, eps=1.2, d1=1.0, d2=0.1):
         separate_descendants=True)
 
 
-def label_covering(ptree, labels):
-    A = np.zeros((ptree.n_nodes, np.max(labels) + 1), dtype=int)
-    for i in range(ptree.n_nodes - 1, -1, -1):
-        l = labels[i]
-        if l != -1:
-            A[i, l] = 1
-        p = ptree.parents[i]
-        if p != -1:
-            A[p, :] += A[i, :]
-    for i in range(ptree.n_nodes - 1, -1, -1):
-        l = labels[i]
-        if l != -1:
-            p = ptree.parents[i]
-            if p != -1:
-                m = labels[p]
-                if m != -1:
-                    A[p, m] += A[i, l]
-    return A
-
-
-def entropy(P):
-    N = P > 0
-    T = P.sum(axis=1).astype(float)
-    S = np.zeros((P.shape[0],))
-    for i in range(P.shape[0]):
-        S[i] = -np.sum(P[i, N[i,:]]/T[i]*np.log(P[i, N[i,:]]/T[i]))
-    return S
+def score_cluster(ptree, cluster, k=4):
+    """Given a cluster assign a score. The higher the score the more probable
+    that the cluster truly represents a repeating item"""
+    D = sklearn.neighbors.kneighbors_graph(
+        ptree.distance[cluster, :][:, cluster], min(len(cluster) - 1, k),
+        metric='precomputed', mode='distance')
+    score = 0.0
+    for i, j in zip(*D.nonzero()):
+        a = cluster[i]
+        b = cluster[j]
+        si = max(a+1, ptree.match[a]) - a
+        sj = max(b+1, ptree.match[b]) - b
+        score += min(si, sj)/D[i, j]**2
+    return score
 
 
 def extract_label(ptree, labels, label_to_extract):
@@ -252,15 +242,6 @@ def extract_label(ptree, labels, label_to_extract):
     return roots
 
 
-def filter_children_labels(ptree, labels):
-    """Assign children the labels of their parents, if any"""
-    labels = labels.copy()
-    for i, l in enumerate(labels):
-        if l != -1:
-            labels[i:max(i, ptree.match[i])] = l
-    return labels
-
-
 def filter_extracted_labels(labels, extracted):
     """Mark labels already extracted"""
     labels = labels.copy()
@@ -268,15 +249,6 @@ def filter_extracted_labels(labels, extracted):
         for root in forest:
             labels[root] = -1
     return labels
-
-
-def score_labels(ptree, labels):
-    """Assign an score for each label"""
-    scores = collections.defaultdict(int)
-    for i, l in enumerate(labels):
-        if l != -1:
-            scores[l] += max(0, ptree.match[i] - i + 1)
-    return scores
 
 
 def extract_trees(ptree, labels, min_n_trees=6):
@@ -292,13 +264,13 @@ def extract_trees(ptree, labels, min_n_trees=6):
         2. If a node with that label has siblings, extract the siblings too,
            even if they have other labels.
     """
-    labels = filter_children_labels(ptree, labels)
-    scores = score_labels(ptree, labels)
+    clusters = labels_to_clusters(labels)
+    scores = enumerate(score_cluster(ptree, cluster) for cluster in clusters)
     trees = []
-    for l, s in sorted(scores.items(), key=lambda kv: kv[1], reverse=True):
-        t = extract_label(ptree, labels, l)
+    for label, score in sorted(scores, key=lambda kv: kv[1], reverse=True):
+        t = extract_label(ptree, labels, label)
         if len(t) >= min_n_trees:
-            trees.append((s, t))
+            trees.append((score, t))
             labels = filter_extracted_labels(labels, t)
     return trees
 

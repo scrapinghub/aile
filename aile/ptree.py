@@ -1,4 +1,4 @@
-import collections
+import itertools
 
 import numpy as np
 import scrapely.htmlpage as hp
@@ -129,6 +129,15 @@ class PageTree(object):
             if p > -1:
                 self.n_children[p] += 1
         self.max_childs = np.max(self.n_children)
+
+        self.distance = np.ones((self.n_nodes, self.n_nodes), dtype=int)
+        for i in range(self.n_nodes - 1, -1, -1):
+            self.distance[i, i] = 0
+            for a, b in itertools.combinations(self.children(i), 2):
+                for j in range(a, max(a + 1, self.match[a])):
+                    for k in range(b, max(b + 1, self.match[b])):
+                        self.distance[j, k] = self.distance[j, a] + 2 + self.distance[b, k]
+                        self.distance[k, j] = self.distance[j, k]
 
     def __len__(self):
         """Number of nodes in tree"""

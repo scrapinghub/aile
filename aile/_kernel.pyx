@@ -35,7 +35,7 @@ def check_order(op, parents):
         C[i, j] = 1
 
 
-def similarity(ptree, max_items=2):
+def similarity(ptree, max_items=1):
     all_classes = list({node.class_attr for node in ptree.nodes})
     class_index = {c: i for i, c in enumerate(all_classes)}
     class_map = np.array([class_index[node.class_attr] for node in ptree.nodes])
