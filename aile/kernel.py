@@ -4,6 +4,8 @@ import itertools
 import numpy as np
 import sklearn.cluster
 import networkx as nx
+import scrapely as sy
+import pulp
 
 import _kernel as _ker
 import dtw
@@ -273,6 +275,94 @@ def extract_trees(ptree, labels, min_n_trees=6):
             trees.append((score, t))
             labels = filter_extracted_labels(labels, t)
     return trees
+
+
+def tags_between(ptree, root, node):
+    tags = []
+    for node in ptree.prefix(node, stop_at=root):
+        fragment = ptree.page.parsed_body[ptree.index[node]]
+        if isinstance(fragment, sy.htmlpage.HtmlTag):
+            tags.append(fragment.tag)
+    return tags
+
+
+def extract_fields(ptree, item, is_of_interest=None):
+    if is_of_interest is None:
+        is_of_interest = lambda node: ptree.page.parsed_body[node].is_text_content
+    fields = []
+    for i, root in enumerate(item):
+        for node in range(root, max(root + 1, ptree.match[root])):
+                if is_of_interest(ptree.index[node]):
+                    fields.append((i, node))
+    return fields
+
+
+def map_fields(ptree, items, fields):
+    fields_to_items = collections.defaultdict(list)
+    for i, (item, item_fields) in enumerate(zip(items, fields)):
+        for root in item:
+            for j, node in item_fields:
+                fields_to_items[
+                    tuple(tags_between(ptree, root, node))].append((node, (i, j)))
+    return fields_to_items
+
+
+def representative_items(items, fields):
+    """Find the minimum number of items necessary to extract all the fields"""
+    #    x[i] = 1 iff i-th item is representative
+    # A[i, j] = 1 iff i-th item contains the j-th field
+    #
+    # Solve:
+    #           min np.sum(x)
+    # Subject to:
+    #           np.all(np.dot(A.T, x) >= np.repeat(1, len(fields)))
+    P = pulp.LpProblem('representative_items', pulp.LpMinimize)
+    X = [pulp.LpVariable('x{0}'.format(i), cat='Binary')
+         for i in range(len(items))]
+    P += pulp.lpSum(X)
+    for item_list in fields:
+        P += pulp.lpSum(
+            [X[item] for (node, (item, root)) in item_list]) >= 1
+    P.solve()
+    return [i for (i, x) in enumerate(X) if x.value() == 1]
+
+
+def json_items(ptree, items):
+    container_node = ptree.common_ascendant(item[0] for item in items)
+    yield {
+        'annotations': {'content': '#listitem'},
+        'id': 'aile-container',
+        'required': [],
+        'tagid': ptree.index[container_node],
+        'item_container': True
+    }
+
+    fields = [extract_fields(ptree, item) for item in items]
+    representative = representative_items(
+        items, map_fields(ptree, items, fields).values())
+    for i in representative:
+        item = items[i]
+        item_id = 'aile-item-{0}'.format(i)
+        json = {
+            'annotations': {'content': '#listitem'},
+            'id': item_id,
+            'required': [],
+            'tagid': ptree.index[item[0]],
+            'item_container': True
+        }
+        if len(item) > 1:
+            json['siblings'] = len(item) - 1
+        yield json
+        for j, (root, node) in enumerate(fields[i]):
+            yield {
+                'annotations': {'content': 'text-content'},
+                'id': 'aile-item-{0}-field-{1}'.format(i, j),
+                'required': [],
+                'tagid': ptree.index[node],
+                'item_container': False,
+                'container_id': item_id,
+                'repeated_item': False
+            }
 
 
 def path_distance(path_1, path_2):
