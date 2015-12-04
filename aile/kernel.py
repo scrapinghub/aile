@@ -136,6 +136,20 @@ class TreeClustering(object):
 
     def fit_predict(self, X, min_cluster_size=6, d1=1.0, d2=0.1, eps=1.0,
                     separate_descendants=True):
+        """Fit the data X and label each sample.
+
+        X is a kernel of size (n_samples, n_samples). From this kernel the
+        distance matrix is computed and averaged with the tree size distance,
+        and DBSCAN applied to the result. Finally, we enforce the constraint
+        that a node cannot be inside the same cluster of any of its ascendants.
+
+        X                  : kernel
+        min_cluster_size   : parameter to DBSCAN
+        eps                : parameter to DBSCAN
+        d1                 : weight of distance computed form X
+        d2                 : weight of distance computed from tree size
+        separate_ascendants: True to enfonce the cannot-link constraints
+        """
         dd = float(d1 + d2)
         d1 /= dd
         d2 /= dd
@@ -152,37 +166,6 @@ class TreeClustering(object):
                     self.clusters.append(c)
         self.labels = clusters_to_labels(self.clusters, D.shape[0])
         return self.labels
-
-    def neighbors(self, D, nodes=None, k=50):
-        if nodes is None:
-            nodes = np.arange(D.shape[0])
-        E = D[nodes,:][:,nodes]
-        k = min(k+1, len(nodes))
-        K = np.argsort(E, axis=1)
-        G = nx.Graph()
-        for i in range(K.shape[0]):
-            ni = nodes[i]
-            pi = self.page_tree.parents[ni]
-            if pi != -1:
-                for j in range(i+1, K.shape[0]):
-                    nj = nodes[j]
-                    pj = self.page_tree.parents[nj]
-                    if pj == pi:
-                        G.add_edge(
-                            min(ni, nj), max(ni, nj),
-                            capacity=1.0/(np.sqrt(2) + 1 - E[i, j]))
-            p = q = 0
-            while p < K.shape[1] and q < k:
-                j = K[i, p]
-                nj = nodes[j]
-                if E[i, j] == 0:
-                    cap = np.inf
-                else:
-                    cap = 1.0/(np.sqrt(2) + 1 - E[i, j])
-                    q += 1
-                G.add_edge(min(ni, nj), max(ni, nj), capacity=cap)
-                p += 1
-        return G
 
 
 def cluster(page_tree, K, eps=1.2, d1=1.0, d2=0.1):
@@ -213,8 +196,8 @@ def score_cluster(ptree, cluster, k=4):
     return score
 
 
-def extract_label(ptree, labels, label_to_extract):
-    """Extract all forests inside the labeled PageTree that are marked or have
+def extract_items_with_label(ptree, labels, label_to_extract):
+    """Extract all items inside the labeled PageTree that are marked or have
     a sibling that is marked with label_to_extract.
 
     Returns: a list of tuples, where each tuple are the roots of the extracted
@@ -244,40 +227,38 @@ def extract_label(ptree, labels, label_to_extract):
     return roots
 
 
-def filter_extracted_labels(labels, extracted):
+def filter_extracted_items(labels, extracted):
     """Mark labels already extracted"""
     labels = labels.copy()
-    for forest in extracted:
-        for root in forest:
+    for item in extracted:
+        for root in item:
             labels[root] = -1
     return labels
 
 
-def extract_trees(ptree, labels, min_n_trees=6):
-    """Extract the repeating trees.
+def extract_items(ptree, labels, min_n_items=6):
+    """Extract the repeating items.
 
-    We cannot use the cluster labels as is because:
-        1. If a tree repeats not only its root is assigned a label,
-        most of its children too.
-        2. A repating patter can be made of several distinct trees.
-
-    The algorithm to extract the repeating trees goes as follows:
+    The algorithm to extract the repeating items goes as follows:
         1. Determine the label that covers most children on the page
         2. If a node with that label has siblings, extract the siblings too,
            even if they have other labels.
+
+    The output is a list of lists of items
     """
     clusters = labels_to_clusters(labels)
     scores = enumerate(score_cluster(ptree, cluster) for cluster in clusters)
-    trees = []
+    items = []
     for label, score in sorted(scores, key=lambda kv: kv[1], reverse=True):
-        t = extract_label(ptree, labels, label)
-        if len(t) >= min_n_trees:
-            trees.append((score, t))
-            labels = filter_extracted_labels(labels, t)
-    return trees
+        t = extract_items_with_label(ptree, labels, label)
+        if len(t) >= min_n_items:
+            items.append(t)
+            labels = filter_extracted_items(labels, t)
+    return items
 
 
 def tags_between(ptree, root, node):
+    """Compute the tags that go from node upwards to root"""
     tags = []
     for node in ptree.prefix(node, stop_at=root):
         fragment = ptree.page.parsed_body[ptree.index[node]]
@@ -286,28 +267,46 @@ def tags_between(ptree, root, node):
     return tags
 
 
+class ItemField(object):
+    def __init__(self, node, item, root=None, sibling=None):
+        self.node = node
+        self.item = item
+        self.root = root if root is not None else 0
+        # TODO
+        self.sibling = None
+
+
 def extract_fields(ptree, item, is_of_interest=None):
+    """Extract the fields contained in item.
+
+    Returns a list of fields, where each field is a pair of root number and
+    tree node index
+    """
     if is_of_interest is None:
         is_of_interest = lambda node: ptree.page.parsed_body[node].is_text_content
     fields = []
     for i, root in enumerate(item):
         for node in range(root, max(root + 1, ptree.match[root])):
                 if is_of_interest(ptree.index[node]):
-                    fields.append((i, node))
+                    fields.append(ItemField(node, item, i))
     return fields
 
 
-def map_fields(ptree, items, fields):
-    fields_to_items = collections.defaultdict(list)
-    for i, (item, item_fields) in enumerate(zip(items, fields)):
-        for root in item:
-            for j, node in item_fields:
-                fields_to_items[
-                    tuple(tags_between(ptree, root, node))].append((node, (i, j)))
-    return fields_to_items
+def group_fields(ptree, fields):
+    """Two fields are considered equal if the path that goes from the field
+    up to the item root is equal
+
+    TODO: siblings
+    """
+    groups = collections.defaultdict(list)
+    for item_fields in fields:
+        for field in item_fields:
+            path_to_root = tags_between(ptree, field.item[field.root], field.node)
+            groups[tuple(path_to_root)].append(field)
+    return groups
 
 
-def representative_items(items, fields):
+def representative_items(items, grouped_fields):
     """Find the minimum number of items necessary to extract all the fields"""
     #    x[i] = 1 iff i-th item is representative
     # A[i, j] = 1 iff i-th item contains the j-th field
@@ -316,13 +315,14 @@ def representative_items(items, fields):
     #           min np.sum(x)
     # Subject to:
     #           np.all(np.dot(A.T, x) >= np.repeat(1, len(fields)))
+    index_items = {item: i for i, item in enumerate(items)}
     P = pulp.LpProblem('representative_items', pulp.LpMinimize)
     X = [pulp.LpVariable('x{0}'.format(i), cat='Binary')
          for i in range(len(items))]
     P += pulp.lpSum(X)
-    for item_list in fields:
+    for group in grouped_fields.values():
         P += pulp.lpSum(
-            [X[item] for (node, (item, root)) in item_list]) >= 1
+            [X[index_items[field.item]] for field in group]) >= 1
     P.solve()
     return [i for (i, x) in enumerate(X) if x.value() == 1]
 
@@ -339,7 +339,7 @@ def json_items(ptree, items):
 
     fields = [extract_fields(ptree, item) for item in items]
     representative = representative_items(
-        items, map_fields(ptree, items, fields).values())
+        items, group_fields(ptree, fields))
     for i in representative:
         item = items[i]
         item_id = 'aile-item-{0}'.format(i)
@@ -353,12 +353,12 @@ def json_items(ptree, items):
         if len(item) > 1:
             json['siblings'] = len(item) - 1
         yield json
-        for j, (root, node) in enumerate(fields[i]):
+        for j, field in enumerate(fields[i]):
             yield {
                 'annotations': {'content': 'text-content'},
                 'id': 'aile-item-{0}-field-{1}'.format(i, j),
                 'required': [],
-                'tagid': ptree.index[node],
+                'tagid': ptree.index[field.node],
                 'item_container': False,
                 'container_id': item_id,
                 'repeated_item': False
@@ -394,18 +394,18 @@ def pairwise_path_distance(path_seq_1, path_seq_2):
     return D
 
 
-def extract_path_seq_1(ptree, forest):
+def extract_path_seq_1(ptree, item):
     paths = []
-    for root in forest:
+    for root in item:
         for path in ptree.prefixes_at(root):
             paths.append((path[0], path))
     return paths
 
 
-def extract_path_seq(ptree, trees):
+def extract_path_seq(ptree, items):
     all_paths = []
-    for tree in trees:
-        paths = extract_path_seq_1(ptree, tree)
+    for item in items:
+        paths = extract_path_seq_1(ptree, item)
         all_paths.append(paths)
     return all_paths
 
@@ -461,31 +461,31 @@ def match_graph(all_paths):
     return G
 
 
-def align_items(ptree, trees, node_to_clique):
+def align_items(ptree, items, node_to_clique):
     n_cols = max(node_to_clique.values()) + 1
-    items = np.zeros((len(trees), n_cols), dtype=int) - 1
-    for i, tree in enumerate(trees):
-        for root in tree:
+    table = np.zeros((len(items), n_cols), dtype=int) - 1
+    for i, item in enumerate(items):
+        for root in item:
             for c in range(root, max(root + 1, ptree.match[root])):
                 try:
-                    items[i, node_to_clique[c]] = c
+                    table[i, node_to_clique[c]] = c
                 except KeyError:
                     pass
-    return items
+    return table
 
 
-def extract_items(ptree, trees, labels):
+def extract_item_table(ptree, items, labels):
     return align_items(
         ptree,
-        trees,
+        items,
         find_cliques(
             match_graph(map_paths(
-                lambda x: labels[x], extract_path_seq(ptree, trees))),
-            0.5*len(trees))
+                lambda x: labels[x], extract_path_seq(ptree, items))),
+            0.5*len(items))
     )
 
 
-ItemTable = collections.namedtuple('ItemTable', ['roots', 'fields'])
+ItemTable = collections.namedtuple('ItemTable', ['items', 'cells'])
 
 
 class ItemExtract(object):
@@ -500,22 +500,10 @@ class ItemExtract(object):
         self.page_tree = page_tree
         self.kernel = _ker.kernel(page_tree, max_depth=k_max_depth, decay=k_decay)
         self.labels = cluster(page_tree, self.kernel, eps=c_eps, d1=c_d1, d2=c_d2)
-        self.trees = extract_trees(page_tree, self.labels)
-        self.items = [ItemTable(t, extract_items(page_tree, t, self.labels))
-                      for (s, t) in self.trees]
-        self.item_fragments = [
-            ItemTable([page_tree.fragment_index(np.array(root)) for root in t],
-                      page_tree.fragment_index(i))
-            for t, i in self.items]
-
-        self.counts = np.ones((self.page_tree.n_nodes,), dtype=int)
-        for i in range(self.page_tree.n_nodes):
-            children = self.page_tree.children(i)
-            children_counts = collections.Counter(
-                self.labels[i] for c in children if self.labels[i] != -1)
-            for c in children:
-                label = self.labels[i]
-                if label != -1:
-                    self.counts[c] = children_counts[label]
-                else:
-                    self.counts[c] = 1
+        self.items = extract_items(page_tree, self.labels)
+        self.tables = [ItemTable(items, extract_item_table(page_tree, items, self.labels))
+                       for items in self.items]
+        self.table_fragments = [
+            ItemTable([page_tree.fragment_index(np.array(root)) for root in item],
+                      page_tree.fragment_index(fields))
+            for item, fields in self.tables]
