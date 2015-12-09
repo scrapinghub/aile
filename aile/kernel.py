@@ -4,8 +4,6 @@ import itertools
 import numpy as np
 import sklearn.cluster
 import networkx as nx
-import scrapely as sy
-import pulp
 
 import _kernel as _ker
 import dtw
@@ -255,114 +253,6 @@ def extract_items(ptree, labels, min_n_items=6):
             items.append(t)
             labels = filter_extracted_items(labels, t)
     return items
-
-
-def tags_between(ptree, root, node):
-    """Compute the tags that go from node upwards to root"""
-    tags = []
-    for node in ptree.prefix(node, stop_at=root):
-        fragment = ptree.page.parsed_body[ptree.index[node]]
-        if isinstance(fragment, sy.htmlpage.HtmlTag):
-            tags.append(fragment.tag)
-    return tags
-
-
-class ItemField(object):
-    def __init__(self, node, item, root=None, sibling=None):
-        self.node = node
-        self.item = item
-        self.root = root if root is not None else 0
-        # TODO
-        self.sibling = None
-
-
-def extract_fields(ptree, item, is_of_interest=None):
-    """Extract the fields contained in item.
-
-    Returns a list of fields, where each field is a pair of root number and
-    tree node index
-    """
-    if is_of_interest is None:
-        is_of_interest = lambda node: ptree.page.parsed_body[node].is_text_content
-    fields = []
-    for i, root in enumerate(item):
-        for node in range(root, max(root + 1, ptree.match[root])):
-                if is_of_interest(ptree.index[node]):
-                    fields.append(ItemField(node, item, i))
-    return fields
-
-
-def group_fields(ptree, fields):
-    """Two fields are considered equal if the path that goes from the field
-    up to the item root is equal
-
-    TODO: siblings
-    """
-    groups = collections.defaultdict(list)
-    for item_fields in fields:
-        for field in item_fields:
-            path_to_root = tags_between(ptree, field.item[field.root], field.node)
-            groups[tuple(path_to_root)].append(field)
-    return groups
-
-
-def representative_items(items, grouped_fields):
-    """Find the minimum number of items necessary to extract all the fields"""
-    #    x[i] = 1 iff i-th item is representative
-    # A[i, j] = 1 iff i-th item contains the j-th field
-    #
-    # Solve:
-    #           min np.sum(x)
-    # Subject to:
-    #           np.all(np.dot(A.T, x) >= np.repeat(1, len(fields)))
-    index_items = {item: i for i, item in enumerate(items)}
-    P = pulp.LpProblem('representative_items', pulp.LpMinimize)
-    X = [pulp.LpVariable('x{0}'.format(i), cat='Binary')
-         for i in range(len(items))]
-    P += pulp.lpSum(X)
-    for group in grouped_fields.values():
-        P += pulp.lpSum(
-            [X[index_items[field.item]] for field in group]) >= 1
-    P.solve()
-    return [i for (i, x) in enumerate(X) if x.value() == 1]
-
-
-def json_items(ptree, items):
-    container_node = ptree.common_ascendant(item[0] for item in items)
-    yield {
-        'annotations': {'content': '#listitem'},
-        'id': 'aile-container',
-        'required': [],
-        'tagid': ptree.index[container_node],
-        'item_container': True
-    }
-
-    fields = [extract_fields(ptree, item) for item in items]
-    representative = representative_items(
-        items, group_fields(ptree, fields))
-    for i in representative:
-        item = items[i]
-        item_id = 'aile-item-{0}'.format(i)
-        json = {
-            'annotations': {'content': '#listitem'},
-            'id': item_id,
-            'required': [],
-            'tagid': ptree.index[item[0]],
-            'item_container': True
-        }
-        if len(item) > 1:
-            json['siblings'] = len(item) - 1
-        yield json
-        for j, field in enumerate(fields[i]):
-            yield {
-                'annotations': {'content': 'text-content'},
-                'id': 'aile-item-{0}-field-{1}'.format(i, j),
-                'required': [],
-                'tagid': ptree.index[field.node],
-                'item_container': False,
-                'container_id': item_id,
-                'repeated_item': False
-            }
 
 
 def path_distance(path_1, path_2):
