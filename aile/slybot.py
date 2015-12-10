@@ -67,7 +67,11 @@ def extract_field_locations(ptree, item_location, is_of_interest=None):
     field_locations = []
     for i, root in enumerate(item_location):
         for node in range(root, max(root + 1, ptree.match[root])):
-                if is_of_interest(ptree.index[node]):
+            tagid = ptree.index[node]
+            if is_of_interest(tagid):
+                if not isinstance(ptree.page.parsed_body[tagid], sy.htmlpage.HtmlPage):
+                    node = ptree.parents[node]
+                if node != -1:
                     field_locations.append(FieldLocation(node, item_location, i))
     return field_locations
 
@@ -137,29 +141,32 @@ def generate_item_annotations(item):
     fields_in_location = collections.defaultdict(list)
     for field in item.fields:
         for location in field.locations:
-            fields_in_location[location.item].append(location)
+            fields_in_location[location.item].append((location, field.name))
     annotation_locations = good_annotation_locations(item)
     for i in annotation_locations:
         location = item.locations[i]
-        item_id = 'aile-item-instance-{0}'.format(i)
+        instance_id = 'aile-item-instance-{0}'.format(i)
         annotation = {
             'annotations': {'content': '#listitem'},
-            'id': item_id,
+            'id': instance_id,
             'required': [],
             'tagid': item.ptree.index[location[0]],
-            'item_container': True
+            'item_container': True,
+            'container_id': 'aile-container',
+            'item_id': item.name,
+            'repeated': True
         }
         if len(location) > 1:
             annotation['siblings'] = len(location) - 1
         yield annotation
-        for j, field_location in enumerate(fields_in_location[item.locations[i]]):
+        for j, (field_location, field_name) in enumerate(fields_in_location[item.locations[i]]):
             yield {
                 'annotations': {'content': 'text-content'},
-                'id': '{0}-field-{1}'.format(item_id, j),
+                'id': field_name,
                 'required': [],
                 'tagid': item.ptree.index[field_location.node],
                 'item_container': False,
-                'container_id': item_id,
+                'container_id': instance_id,
                 'repeated_item': False,
                 'item_id': item.name
             }
@@ -176,7 +183,7 @@ def generate_project(name='AILE', version='1.0', comment=''):
 def generate_spider(start_url, templates):
     return {
         'start_urls': [start_url],
-        'links_to_follow': 'patterns',
+        'links_to_follow': 'none',
         'follow_patterns': [],
         'exclude_patterns': [],
         'templates': templates
