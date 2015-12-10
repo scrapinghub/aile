@@ -4,6 +4,7 @@ import collections
 import json
 
 import scrapely as sy
+import slyd.utils
 import pulp
 from slyd.plugins.scrapely_annotations import Annotations
 
@@ -128,13 +129,16 @@ def good_annotation_locations(item):
 
 
 def generate_item_annotations(item):
+    def get_tagid(i):
+        return item.ptree.page.parsed_body[i].attributes[slyd.utils.TAGID]
+
     container_node = item.ptree.common_ascendant(
         location[0] for location in item.locations)
     yield {
         'annotations': {'content': '#listitem'},
         'id': 'aile-container',
         'required': [],
-        'tagid': item.ptree.index[container_node],
+        'tagid': get_tagid(item.ptree.index[container_node]),
         'item_container': True
     }
 
@@ -150,7 +154,7 @@ def generate_item_annotations(item):
             'annotations': {'content': '#listitem'},
             'id': instance_id,
             'required': [],
-            'tagid': item.ptree.index[location[0]],
+            'tagid': get_tagid(item.ptree.index[location[0]]),
             'item_container': True,
             'container_id': 'aile-container',
             'item_id': item.name,
@@ -164,7 +168,7 @@ def generate_item_annotations(item):
                 'annotations': {'content': 'text-content'},
                 'id': field_name,
                 'required': [],
-                'tagid': item.ptree.index[field_location.node],
+                'tagid': get_tagid(item.ptree.index[field_location.node]),
                 'item_container': False,
                 'container_id': instance_id,
                 'repeated_item': False,
@@ -203,6 +207,9 @@ def generate_empty_template(page, scrapes):
 
 
 def generate_slybot(item_extract, path='./slybot-project'):
+    """Warning: modifies item_extract.page_tree.page"""
+    slyd.utils.add_tagids(item_extract.page_tree.page)
+
     if not os.path.exists(path):
         os.mkdir(path)
 
