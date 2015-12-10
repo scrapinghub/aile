@@ -200,8 +200,8 @@ def generate_slybot(item_extract, path='./slybot-project'):
         os.mkdir(path)
 
     # project.json
-    with open(os.path.join(path, 'project.json'), 'w') as project_path:
-        json.dump(generate_project(), project_path, indent=4, sort_keys=True)
+    with open(os.path.join(path, 'project.json'), 'w') as project_file:
+        json.dump(generate_project(), project_file, indent=4, sort_keys=True)
 
     # items.json
     items = [
@@ -210,29 +210,31 @@ def generate_slybot(item_extract, path='./slybot-project'):
         for i, item_locations in enumerate(item_extract.items)
     ]
     items = [items[0]]
-    with open(os.path.join(path, 'items.json'), 'w') as items_path:
+    with open(os.path.join(path, 'items.json'), 'w') as items_file:
         json.dump({item.name: item.dict for item in items},
-                  items_path, indent=4, sort_keys=True)
+                  items_file, indent=4, sort_keys=True)
 
     # extractors
-    with open(os.path.join(path, 'extractors.json'), 'w') as extractors_path:
-        json.dump({}, extractors_path, indent=4, sort_keys=True)
+    with open(os.path.join(path, 'extractors.json'), 'w') as extractors_file:
+        json.dump({}, extractors_file, indent=4, sort_keys=True)
 
     # spiders/
     templates = []
     for item in items:
-        annotations = generate_item_annotations(item)
+        annotations = list(generate_item_annotations(item))
+        with open(os.path.join(path, 'annotation-{0}.json'.format(item.name)), 'w') as annotation_file:
+            json.dump(annotations, annotation_file, indent=4, sort_keys=True)
         template = generate_empty_template(item_extract.page_tree.page, item.name)
         Annotations().save_extraction_data({'extracts': annotations}, template)
         templates.append(template)
     spiders_dir = os.path.join(path, 'spiders')
     if not os.path.exists(spiders_dir):
         os.mkdir(spiders_dir)
-    with open(os.path.join(spiders_dir, 'aile.json'), 'w') as spider_path:
+    with open(os.path.join(spiders_dir, 'aile.json'), 'w') as spider_file:
         json.dump(
             generate_spider(
                 item_extract.page_tree.page.url,
                 templates),
-            spider_path,
+            spider_file,
             indent=4,
             sort_keys=True)
