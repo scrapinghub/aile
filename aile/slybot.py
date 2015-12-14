@@ -128,7 +128,7 @@ def good_annotation_locations(item):
     return [i for (i, x) in enumerate(X) if x.value() == 1]
 
 
-def generate_item_annotations(item):
+def generate_item_annotations(item, best_locations=False):
     def get_tagid(i):
         return item.ptree.page.parsed_body[i].attributes[slyd.utils.TAGID]
 
@@ -137,41 +137,39 @@ def generate_item_annotations(item):
     yield {
         'annotations': {'content': '#listitem'},
         'id': 'aile-container',
-        'required': [],
         'tagid': get_tagid(item.ptree.index[container_node]),
         'item_container': True
     }
 
+    location = item.locations[0]
+    annotation = {
+        'annotations': {'content': '#listitem'},
+        'id': 'aile-item-first-instance',
+        'tagid': get_tagid(item.ptree.index[location[0]]),
+        'item_container': True,
+        'container_id': 'aile-container',
+        'item_id': item.name,
+        'repeated': True
+    }
+    if len(location) > 1:
+        annotation['siblings'] = len(location) - 1
+    yield annotation
     fields_in_location = collections.defaultdict(list)
     for field in item.fields:
         for location in field.locations:
             fields_in_location[location.item].append((location, field.name))
-    annotation_locations = good_annotation_locations(item)
+    if best_locations:
+        annotation_locations = good_annotation_locations(item)
+    else:
+        annotation_locations = [0]
     for i in annotation_locations:
-        location = item.locations[i]
-        instance_id = 'aile-item-instance-{0}'.format(i)
-        annotation = {
-            'annotations': {'content': '#listitem'},
-            'id': instance_id,
-            'required': [],
-            'tagid': get_tagid(item.ptree.index[location[0]]),
-            'item_container': True,
-            'container_id': 'aile-container',
-            'item_id': item.name,
-            'repeated': True
-        }
-        if len(location) > 1:
-            annotation['siblings'] = len(location) - 1
-        yield annotation
         for j, (field_location, field_name) in enumerate(fields_in_location[item.locations[i]]):
             yield {
                 'annotations': {'content': 'text-content'},
                 'id': field_name,
-                'required': [],
                 'tagid': get_tagid(item.ptree.index[field_location.node]),
                 'item_container': False,
-                'container_id': instance_id,
-                'repeated_item': False,
+                'container_id': 'aile-item-first-instance',
                 'item_id': item.name
             }
 
@@ -240,6 +238,8 @@ def generate_slybot(item_extract, path='./slybot-project'):
             json.dump(annotations, annotation_file, indent=4, sort_keys=True)
         template = generate_empty_template(item_extract.page_tree.page, item.name)
         Annotations().save_extraction_data({'extracts': annotations}, template)
+        with open('{0}-template.html'.format(item.name), 'w') as template_file:
+            template_file.write(template['annotated_body'].encode('UTF-8'))
         templates.append(template)
     spiders_dir = os.path.join(path, 'spiders')
     if not os.path.exists(spiders_dir):
