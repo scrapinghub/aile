@@ -97,8 +97,7 @@ def extract_fields(ptree, item_locations, is_of_interest=None, name='aile-field'
                        for field_location in extract_field_locations(ptree, item_location)]
     grouped = group_fields_by_path(ptree, field_locations)
     return [Field(name='{0}-field-{1}'.format(name, i),
-                  locations=locations,
-                  required=(len(item_locations)==len(locations)))
+                  locations=locations, required=False)
             for i, (path, locations) in enumerate(grouped.iteritems())]
 
 
