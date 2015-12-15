@@ -164,7 +164,7 @@ def generate_item_annotations(item, best_locations=False):
     for i in annotation_locations:
         for j, (field_location, field_name) in enumerate(fields_in_location[item.locations[i]]):
             yield {
-                'annotations': {'content': 'text-content'},
+                'annotations': {'content': field_name},
                 'id': field_name,
                 'tagid': get_tagid(item.ptree.index[field_location.node]),
                 'item_container': False,
