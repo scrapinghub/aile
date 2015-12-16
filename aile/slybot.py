@@ -313,7 +313,6 @@ def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2):
             item_extract.page_tree, item_locations, name='aile-item-{0}'.format(i))
         for i, item_locations in enumerate(item_extract.items)
     ]
-    items = [items[0]] # TODO
     with open(os.path.join(path, 'items.json'), 'w') as items_file:
         json.dump({item.name: item.dict for item in items},
                   items_file, indent=4, sort_keys=True)
@@ -337,6 +336,7 @@ def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2):
                   'w') as template_file:
             template_file.write(template['annotated_body'].encode('UTF-8'))
         templates.append(template)
+        break # TODO: only extract one item for now
     spiders_dir = os.path.join(path, 'spiders')
     if not os.path.exists(spiders_dir):
         os.mkdir(spiders_dir)
