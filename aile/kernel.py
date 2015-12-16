@@ -225,12 +225,12 @@ def extract_items_with_label(ptree, labels, label_to_extract):
     return roots
 
 
-def filter_extracted_items(labels, extracted):
+def filter_extracted_items(ptree, labels, extracted):
     """Mark labels already extracted"""
     labels = labels.copy()
     for item in extracted:
         for root in item:
-            labels[root] = -1
+            labels[root:max(root + 1, ptree.match[root])] = -1
     return labels
 
 
@@ -251,7 +251,7 @@ def extract_items(ptree, labels, min_n_items=6):
         t = extract_items_with_label(ptree, labels, label)
         if len(t) >= min_n_items:
             items.append(t)
-            labels = filter_extracted_items(labels, t)
+            labels = filter_extracted_items(ptree, labels, t)
     return items
 
 

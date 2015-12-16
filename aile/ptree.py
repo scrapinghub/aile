@@ -125,8 +125,10 @@ class PageTree(object):
             self.parents[i+1:m] = i
 
         self.n_children = np.zeros((self.n_nodes,), dtype=int)
-        for p in self.parents:
+        self.i_child = np.zeros((self.n_nodes,), dtype=int)
+        for i, p in enumerate(self.parents):
             if p > -1:
+                self.i_child[i] = self.n_children[p]
                 self.n_children[p] += 1
         self.max_childs = np.max(self.n_children)
 
