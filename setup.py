@@ -23,5 +23,6 @@ setup(
         'scrapely',
         'cython',
         'networkx'],
-    ext_modules = cythonize(extensions)
+    ext_modules = cythonize(extensions),
+    scripts = ['scripts/gen-slybot-project']
 )
