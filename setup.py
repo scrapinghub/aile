@@ -22,7 +22,9 @@ setup(
         'scikit-learn',
         'scrapely',
         'cython',
-        'networkx'],
+        'networkx',
+        'pulp'
+    ],
     ext_modules = cythonize(extensions),
     scripts = ['scripts/gen-slybot-project']
 )

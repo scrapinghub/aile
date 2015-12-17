@@ -4,6 +4,7 @@ import itertools
 import numpy as np
 import sklearn.cluster
 import networkx as nx
+import scrapely.htmlpage as hp
 
 import _kernel as _ker
 import dtw
@@ -148,10 +149,8 @@ class TreeClustering(object):
         d2                 : weight of distance computed from tree size
         separate_ascendants: True to enfonce the cannot-link constraints
         """
-        dd = float(d1 + d2)
-        d1 /= dd
-        d2 /= dd
-        D = d1*X + d2*boost(tree_size_distance(self.page_tree), 2)
+        Y = boost(tree_size_distance(self.page_tree), 2)
+        D = d1*X + d2*Y
         clt = sklearn.cluster.DBSCAN(
             eps=eps, min_samples=min_cluster_size, metric='precomputed')
         self.clusters = []
@@ -214,15 +213,51 @@ def extract_items_with_label(ptree, labels, label_to_extract):
                     if first is None:
                         first = m
                     elif m == first:
-                        roots.append(tuple(item))
-                        item = []
-                    item.append(c)
+                        if item:
+                            roots.append(tuple(item))
+                            item = []
+                    # Only append tags as item roots
+                    if isinstance(ptree.page.parsed_body[ptree.index[c]], hp.HtmlTag):
+                        item.append(c)
             if item:
                 roots.append(tuple(item))
             i = ptree.match[i]
         else:
             i += 1
     return roots
+
+
+def regularize_item_length(ptree, labels, item_locations):
+    """Make sure all item locations have the same number of roots"""
+    if not item_locations:
+        return item_locations
+    min_item_length = min(map(len, item_locations))
+    cut_items = False
+    for item_location in item_locations:
+        if len(item_location) > min_item_length:
+            cut_items = True
+            break
+    if cut_items:
+        label_count = collections.Counter(
+            labels[root] for item_location in item_locations
+            for root in item_location)
+        new_item_locations = []
+        for item_location in item_locations:
+            if len(item_location) > min_item_length:
+                scored = sorted(
+                    ((label_count[labels[root]], root) for root in item_location),
+                    reverse=True)
+                keep = set(x[1] for x in scored[:min_item_length])
+                new_item_location = tuple(
+                    root
+                    for root in item_location
+                    if root in keep)
+            else:
+                new_item_location = item_location
+            new_item_locations.append(new_item_location)
+    else:
+        new_item_locations = item_locations
+    return new_item_locations
 
 
 def filter_extracted_items(ptree, labels, extracted):
@@ -248,7 +283,9 @@ def extract_items(ptree, labels, min_n_items=6):
     scores = enumerate(score_cluster(ptree, cluster) for cluster in clusters)
     items = []
     for label, score in sorted(scores, key=lambda kv: kv[1], reverse=True):
-        t = extract_items_with_label(ptree, labels, label)
+        t = regularize_item_length(
+            ptree, labels,
+            extract_items_with_label(ptree, labels, label))
         if len(t) >= min_n_items:
             items.append(t)
             labels = filter_extracted_items(ptree, labels, t)
@@ -380,7 +417,7 @@ ItemTable = collections.namedtuple('ItemTable', ['items', 'cells'])
 
 class ItemExtract(object):
     def __init__(self, page_tree, k_max_depth=2, k_decay=0.5,
-                 c_eps=1.2, c_d1=1.0, c_d2=0.1, separate_descendants=True):
+                 c_eps=1.2, c_d1=1.0, c_d2=1.0, separate_descendants=True):
         """Perform all extraction operations in sequence.
 
         Parameters:

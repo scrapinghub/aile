@@ -296,7 +296,7 @@ def item_is_tag(item):
     return True
 
 
-def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2):
+def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2, max_item_fields=50):
     """Warning: modifies item_extract.page_tree.page"""
     slyd.utils.add_tagids(item_extract.page_tree.page)
 
@@ -326,6 +326,8 @@ def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2):
     for item in filter(item_is_tag, items):
         if min_item_fields is not None and len(item.fields) < min_item_fields:
             continue
+        if max_item_fields is not None and len(item.fields) > max_item_fields:
+            continue
         annotations = list(generate_item_annotations(item))
         with open(os.path.join(path, 'annotation-{0}.json'.format(item.name)), 'w') as annotation_file:
             json.dump(annotations, annotation_file, indent=4, sort_keys=True)
@@ -336,7 +338,7 @@ def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2):
                   'w') as template_file:
             template_file.write(template['annotated_body'].encode('UTF-8'))
         templates.append(template)
-        break # TODO: only extract one item for now
+
     spiders_dir = os.path.join(path, 'spiders')
     if not os.path.exists(spiders_dir):
         os.mkdir(spiders_dir)
