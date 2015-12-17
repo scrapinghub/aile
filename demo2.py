@@ -1,7 +1,6 @@
 import time
 import sys
 
-import slyd.utils
 import scrapely.htmlpage as hp
 import numpy as np
 import ete2

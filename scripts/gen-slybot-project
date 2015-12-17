@@ -32,7 +32,7 @@ if __name__ == '__main__':
 
     print 'Extracting items...',
     t1 = time.clock()
-    ie = aile.kernel.ItemExtract(aile.ptree.PageTree(page))
+    ie = aile.kernel.ItemExtract(aile.ptree.PageTree(page), separate_descendants=True)
     print 'done ({0}s)'.format(time.clock() - t1)
 
     print 'Generating slybot project'

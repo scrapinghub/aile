@@ -166,7 +166,7 @@ class TreeClustering(object):
         return self.labels
 
 
-def cluster(page_tree, K, eps=1.2, d1=1.0, d2=0.1):
+def cluster(page_tree, K, eps=1.2, d1=1.0, d2=0.1, separate_descendants=True):
     """Asign to each node in the tree a cluster label.
 
     Returns: for each node a label id. Label ID -1 means that the node
@@ -175,7 +175,7 @@ def cluster(page_tree, K, eps=1.2, d1=1.0, d2=0.1):
     return TreeClustering(page_tree).fit_predict(
         kernel_to_distance(normalize_kernel(K)),
         eps=eps, d1=d1, d2=d2,
-        separate_descendants=True)
+        separate_descendants=separate_descendants)
 
 
 def score_cluster(ptree, cluster, k=4):
@@ -380,7 +380,7 @@ ItemTable = collections.namedtuple('ItemTable', ['items', 'cells'])
 
 class ItemExtract(object):
     def __init__(self, page_tree, k_max_depth=2, k_decay=0.5,
-                 c_eps=1.2, c_d1=1.0, c_d2=0.1):
+                 c_eps=1.2, c_d1=1.0, c_d2=0.1, separate_descendants=True):
         """Perform all extraction operations in sequence.
 
         Parameters:
@@ -389,7 +389,9 @@ class ItemExtract(object):
         """
         self.page_tree = page_tree
         self.kernel = _ker.kernel(page_tree, max_depth=k_max_depth, decay=k_decay)
-        self.labels = cluster(page_tree, self.kernel, eps=c_eps, d1=c_d1, d2=c_d2)
+        self.labels = cluster(
+            page_tree, self.kernel, eps=c_eps, d1=c_d1, d2=c_d2,
+            separate_descendants=separate_descendants)
         self.items = extract_items(page_tree, self.labels)
         self.tables = [ItemTable(items, extract_item_table(page_tree, items, self.labels))
                        for items in self.items]
