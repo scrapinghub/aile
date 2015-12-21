@@ -137,6 +137,13 @@ def extract_field_locations(ptree, item_location, is_of_interest=default_is_of_i
     return field_locations
 
 
+def group_fields_by_root(field_locations):
+    groups = collections.defaultdict(list)
+    for field_location in field_locations:
+        groups[field_location.item[field_location.root]].append(field_location)
+    return groups
+
+
 def group_fields_by_path(ptree, field_locations):
     """Two fields are considered equal if the path that goes from the field
     up to the item root is equal (and they have the same root index)
@@ -145,10 +152,24 @@ def group_fields_by_path(ptree, field_locations):
     for field_location in field_locations:
         path_to_root = tags_between(
             ptree, field_location.item[field_location.root], field_location.node)
-        path_to_root.append(field_location.sibling)
-        path_to_root.append(field_location.root)
         groups[tuple(path_to_root)].append(field_location)
     return groups
+
+
+def append_order(grouped_by_path):
+    for path, field_locations in grouped_by_path.iteritems():
+        for i, field_location in enumerate(field_locations):
+            yield (path + (i,), field_location)
+
+
+def group_fields(ptree, field_locations):
+    grouped = collections.defaultdict(list)
+    by_root = group_fields_by_root(field_locations)
+    for root, field_locations in by_root.iteritems():
+        by_path = group_fields_by_path(ptree, field_locations)
+        for path, field_location in append_order(by_path):
+            grouped[path].append(field_location)
+    return grouped
 
 
 def cmp_location_groups(a, b):
@@ -162,7 +183,7 @@ def extract_fields(ptree, item_locations, is_of_interest=default_is_of_interest,
                        for item_location in item_locations
                        for field_location in extract_field_locations(
                                ptree, item_location, is_of_interest)]
-    grouped = group_fields_by_path(ptree, field_locations)
+    grouped = group_fields(ptree, field_locations)
     grouped_locations = sorted(grouped.values(), cmp=cmp_location_groups)
     return [Field(name='{0}-field-{1}'.format(name, i),
                   locations=locations,
@@ -205,21 +226,23 @@ def generate_item_annotations(item, best_locations=True):
 
     container_node = item.ptree.common_ascendant(
         location[0] for location in item.locations)
+    container_name = 'aile-container-{0}'.format(item.name)
     yield {
         'annotations': {'content': '#listitem'},
-        'id': 'aile-container',
+        'id': container_name,
         'tagid': get_tagid(item.ptree.index[container_node]),
         'item_container': True,
         'ptree_node': container_node
     }
 
+    item_name = '{0}-first-instance'.format(item.name)
     location = item.locations[0]
     annotation = {
         'annotations': {'content': '#listitem'},
-        'id': 'aile-item-first-instance',
+        'id': item_name,
         'tagid': get_tagid(item.ptree.index[location[0]]),
         'item_container': True,
-        'container_id': 'aile-container',
+        'container_id': container_name,
         'item_id': item.name,
         'repeated': True,
         'ptree_node': location[0]
@@ -235,8 +258,12 @@ def generate_item_annotations(item, best_locations=True):
         annotation_locations = good_annotation_locations(item)
     else:
         annotation_locations = [0]
+    annotated = set()
     for i in annotation_locations:
         for j, (field_location, field_name) in enumerate(fields_in_location[item.locations[i]]):
+            if field_name in annotated:
+                continue
+            annotated.add(field_name)
             fragment = item.ptree.index[field_location.node]
             if is_link(item.ptree.page, fragment):
                 annotate = 'href'
@@ -249,7 +276,7 @@ def generate_item_annotations(item, best_locations=True):
                 'id': '{0}-instance-{1}'.format(field_name, i),
                 'tagid': get_tagid(fragment),
                 'item_container': False,
-                'container_id': 'aile-item-first-instance',
+                'container_id': item_name,
                 'item_id': item.name,
                 'ptree_node': field_location.node
             }
@@ -263,23 +290,23 @@ def generate_project(name='AILE', version='1.0', comment=''):
     }
 
 
-def generate_spider(start_url, templates):
+def generate_spider(start_url, template):
     return {
         'start_urls': [start_url],
         'links_to_follow': 'none',
         'follow_patterns': [],
         'exclude_patterns': [],
-        'templates': templates
+        'templates': [template]
     }
 
 
-def generate_empty_template(page, scrapes):
+def generate_empty_template(page):
     return {
         'extractors': {},
         'annotated_body': '',
         'url': page.url,
         'original_body': page.body,
-        'scrapes': scrapes,
+        'scrapes': 'aile-item-0',
         'page_type': 'item',
         'page_id': hashlib.md5(page.url).hexdigest()
     }
@@ -294,6 +321,34 @@ def item_is_tag(item):
                     sy.htmlpage.HtmlTag):
                 return False
     return True
+
+
+def merge_containers(annotations):
+    final_annotations = []
+    grouped_by_tagid = collections.defaultdict(list)
+    for annotation in annotations:
+        if annotation.get('item_container'):
+            grouped_by_tagid[annotation['tagid']].append(annotation)
+        else:
+            final_annotations.append(annotation)
+    rename_id = {}
+    for tagid, annotations in grouped_by_tagid.iteritems():
+        if len(annotations) > 1:
+            old_id = [annotation['id'] for annotation in annotations]
+            new_id = '|'.join(old_id)
+            new_annotation = annotations[0]
+            new_annotation['id'] = new_id
+            final_annotations.append(new_annotation)
+            for annotation_id in old_id:
+                rename_id[annotation_id] = new_id
+        else:
+            final_annotations.append(annotations[0])
+    for annotation in final_annotations:
+        container_id = annotation.get('container_id')
+        if container_id in rename_id:
+            annotation['container_id'] = rename_id[container_id]
+    return sorted(final_annotations,
+                  key=lambda annotation: annotation['id'])
 
 
 def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2, max_item_fields=50):
@@ -322,31 +377,27 @@ def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2, ma
         json.dump({}, extractors_file, indent=4, sort_keys=True)
 
     # spiders/
-    templates = []
+    template = generate_empty_template(item_extract.page_tree.page)
+    annotations = []
     for item in filter(item_is_tag, items):
         if min_item_fields is not None and len(item.fields) < min_item_fields:
             continue
         if max_item_fields is not None and len(item.fields) > max_item_fields:
             continue
-        annotations = list(generate_item_annotations(item))
-        with open(os.path.join(path, 'annotation-{0}.json'.format(item.name)), 'w') as annotation_file:
-            json.dump(annotations, annotation_file, indent=4, sort_keys=True)
-        template = generate_empty_template(item_extract.page_tree.page, item.name)
-        Annotations().save_extraction_data({'extracts': annotations}, template)
-        with open(os.path.join(path,
-                               '{0}-template.html'.format(item.name)),
-                  'w') as template_file:
-            template_file.write(template['annotated_body'].encode('UTF-8'))
-        templates.append(template)
+        annotations += generate_item_annotations(item)
+    annotations = merge_containers(annotations)
+    with open(os.path.join(path, 'annotation-all-items.json'), 'w') as annotation_file:
+        json.dump(annotations, annotation_file, indent=4, sort_keys=True)
+    Annotations().save_extraction_data({'extracts': annotations}, template)
+    with open(os.path.join(path, 'all-items-template.html'), 'w') as template_file:
+        template_file.write(template['annotated_body'].encode('UTF-8'))
 
     spiders_dir = os.path.join(path, 'spiders')
     if not os.path.exists(spiders_dir):
         os.mkdir(spiders_dir)
     with open(os.path.join(spiders_dir, 'aile.json'), 'w') as spider_file:
         json.dump(
-            generate_spider(
-                item_extract.page_tree.page.url,
-                templates),
+            generate_spider(item_extract.page_tree.page.url, template),
             spider_file,
             indent=4,
             sort_keys=True)

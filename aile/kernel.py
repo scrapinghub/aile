@@ -111,8 +111,7 @@ def cut_descendants(D, nodes, page_tree):
 def labels_to_clusters(labels):
     """Given a an assignment of cluster label to each item return the a list
     of sets, where each set is a cluster"""
-    return [np.flatnonzero(labels==label) for label in np.unique(labels)
-            if label != -1]
+    return [np.flatnonzero(labels==label) for label in range(np.max(labels)+1)]
 
 
 def clusters_to_labels(clusters, n_samples):
@@ -177,9 +176,64 @@ def cluster(page_tree, K, eps=1.2, d1=1.0, d2=0.1, separate_descendants=True):
         separate_descendants=separate_descendants)
 
 
+def clusters_tournament(ptree, labels):
+    """A cluster 'wins' if some node inside the cluster is the ascendant
+    of another node in the other cluster"""
+    L = np.max(labels) + 1
+    T = np.zeros((L, L), dtype=int)
+    for i, m in enumerate(ptree.match):
+        li = labels[i]
+        if li != -1:
+            for j in range(max(i + 1, m)):
+                lj = labels[j]
+                if lj != -1:
+                    T[li, lj] += 1
+    return T
+
+
+def _make_acyclic(T, labels):
+    """See https://en.wikipedia.org/wiki/Feedback_arc_set"""
+    n = T.shape[0]
+    if n == 0:
+        return []
+    i = np.random.randint(0, n)
+    L = []
+    R = []
+    for j in range(n):
+        if j != i:
+            if T[i, j] > T[j, i]:
+                R.append(j)
+            else:
+                L.append(j)
+    return (make_acyclic(T[L, :][:, L], labels[L]) +
+            [labels[i]] +
+            make_acyclic(T[R, :][:, R], labels[R]))
+
+
+def make_acyclic(T, labels=None):
+    """Tiven a tournament T, try to rank the clusters in a consisten
+    way"""
+    if labels is None:
+        labels = np.arange(T.shape[0])
+    return _make_acyclic(T, labels)
+
+
+def separate_clusters(ptree, labels):
+    """Make sure no tree node is contained in two different clusters"""
+    ranking = make_acyclic(clusters_tournament(ptree, labels))
+    clusters = labels_to_clusters(labels)
+    labels = labels.copy()
+    for i in ranking:
+        for node in clusters[i]:
+            labels[node+1:max(node+1, ptree.match[node])] = -1
+    return labels
+
+
 def score_cluster(ptree, cluster, k=4):
     """Given a cluster assign a score. The higher the score the more probable
     that the cluster truly represents a repeating item"""
+    if len(cluster) <= 1:
+        return 0.0
     D = sklearn.neighbors.kneighbors_graph(
         ptree.distance[cluster, :][:, cluster], min(len(cluster) - 1, k),
         metric='precomputed', mode='distance')
@@ -193,6 +247,13 @@ def score_cluster(ptree, cluster, k=4):
     return score
 
 
+def some_root_has_label(labels, item, label):
+    for root in item:
+        if labels[root] == label:
+            return True
+    return False
+
+
 def extract_items_with_label(ptree, labels, label_to_extract):
     """Extract all items inside the labeled PageTree that are marked or have
     a sibling that is marked with label_to_extract.
@@ -200,7 +261,7 @@ def extract_items_with_label(ptree, labels, label_to_extract):
     Returns: a list of tuples, where each tuple are the roots of the extracted
     subtrees.
     """
-    roots = []
+    items = []
     i = 0
     while i < len(labels):
         children = ptree.children(i)
@@ -214,30 +275,38 @@ def extract_items_with_label(ptree, labels, label_to_extract):
                         first = m
                     elif m == first:
                         if item:
-                            roots.append(tuple(item))
+                            items.append(tuple(item))
                             item = []
                     # Only append tags as item roots
                     if isinstance(ptree.page.parsed_body[ptree.index[c]], hp.HtmlTag):
                         item.append(c)
             if item:
-                roots.append(tuple(item))
+                items.append(tuple(item))
             i = ptree.match[i]
         else:
             i += 1
-    return roots
+    return filter(lambda item: some_root_has_label(labels, item, label_to_extract),
+                  items)
 
 
-def regularize_item_length(ptree, labels, item_locations):
+def vote(sequence):
+    """Return the most frequent item in sequence"""
+    return max(collections.Counter(sequence).iteritems(),
+               key=lambda kv: kv[1])[0]
+
+
+def regularize_item_length(ptree, labels, item_locations, max_items_cut_per=0.33):
     """Make sure all item locations have the same number of roots"""
     if not item_locations:
         return item_locations
-    min_item_length = min(map(len, item_locations))
-    cut_items = False
-    for item_location in item_locations:
-        if len(item_location) > min_item_length:
-            cut_items = True
-            break
-    if cut_items:
+    min_item_length = vote(len(item_location) for item_location in item_locations)
+    cut_items = sum(len(item_location) > min_item_length
+                    for item_location in item_locations)
+    if cut_items > max_items_cut_per*len(item_locations):
+        return []
+    item_locations = filter(lambda x: len(x) >= min_item_length,
+                            item_locations)
+    if cut_items > 0:
         label_count = collections.Counter(
             labels[root] for item_location in item_locations
             for root in item_location)
@@ -260,15 +329,6 @@ def regularize_item_length(ptree, labels, item_locations):
     return new_item_locations
 
 
-def filter_extracted_items(ptree, labels, extracted):
-    """Mark labels already extracted"""
-    labels = labels.copy()
-    for item in extracted:
-        for root in item:
-            labels[root:max(root + 1, ptree.match[root])] = -1
-    return labels
-
-
 def extract_items(ptree, labels, min_n_items=6):
     """Extract the repeating items.
 
@@ -279,16 +339,19 @@ def extract_items(ptree, labels, min_n_items=6):
 
     The output is a list of lists of items
     """
-    clusters = labels_to_clusters(labels)
-    scores = enumerate(score_cluster(ptree, cluster) for cluster in clusters)
+    labels = separate_clusters(ptree, labels)
+    scores = sorted(
+        enumerate(score_cluster(ptree, cluster)
+                  for cluster in labels_to_clusters(labels)),
+        key=lambda kv: kv[1], reverse=True)
     items = []
-    for label, score in sorted(scores, key=lambda kv: kv[1], reverse=True):
-        t = regularize_item_length(
-            ptree, labels,
-            extract_items_with_label(ptree, labels, label))
+    for label, score in scores:
+        cluster = extract_items_with_label(ptree, labels, label)
+        if len(cluster) < min_n_items:
+            continue
+        t = regularize_item_length(ptree, labels, cluster)
         if len(t) >= min_n_items:
             items.append(t)
-            labels = filter_extracted_items(ptree, labels, t)
     return items
 
 
