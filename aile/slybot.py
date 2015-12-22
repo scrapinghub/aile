@@ -348,7 +348,7 @@ def merge_containers(annotations):
         if container_id in rename_id:
             annotation['container_id'] = rename_id[container_id]
     return sorted(final_annotations,
-                  key=lambda annotation: annotation['id'])
+                  key=lambda annotation: annotation.get('item_id', ''))
 
 
 def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2, max_item_fields=50):
