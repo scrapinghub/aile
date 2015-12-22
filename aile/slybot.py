@@ -129,11 +129,8 @@ def extract_field_locations(ptree, item_location, is_of_interest=default_is_of_i
         for node in range(root, max(root + 1, ptree.match[root])):
             tagid = ptree.index[node]
             if is_of_interest(ptree.page, tagid):
-                if not isinstance(ptree.page.parsed_body[tagid], sy.htmlpage.HtmlTag):
-                    node = ptree.parents[node]
-                if node != -1:
-                    field_locations.add(
-                        FieldLocation(node, item_location, i, ptree.i_child[node]))
+                field_locations.add(
+                    FieldLocation(node, item_location, i, ptree.i_child[node]))
     return field_locations
 
 
@@ -222,7 +219,10 @@ def good_annotation_locations(item, annotate_first=True):
 
 def generate_item_annotations(item, best_locations=True):
     def get_tagid(i):
-        return item.ptree.page.parsed_body[i].attributes[slyd.utils.TAGID]
+        fragment = item.ptree.page.parsed_body[item.ptree.index[i]]
+        if not isinstance(fragment, sy.htmlpage.HtmlTag):
+            return get_tagid(item.ptree.parents[i])
+        return fragment.attributes[slyd.utils.TAGID]
 
     container_node = item.ptree.common_ascendant(
         location[0] for location in item.locations)
@@ -230,7 +230,7 @@ def generate_item_annotations(item, best_locations=True):
     yield {
         'annotations': {'content': '#listitem'},
         'id': container_name,
-        'tagid': get_tagid(item.ptree.index[container_node]),
+        'tagid': get_tagid(container_node),
         'item_container': True,
         'ptree_node': container_node
     }
@@ -240,7 +240,7 @@ def generate_item_annotations(item, best_locations=True):
     annotation = {
         'annotations': {'content': '#listitem'},
         'id': item_name,
-        'tagid': get_tagid(item.ptree.index[location[0]]),
+        'tagid': get_tagid(location[0]),
         'item_container': True,
         'container_id': container_name,
         'item_id': item.name,
