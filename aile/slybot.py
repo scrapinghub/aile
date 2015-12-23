@@ -218,10 +218,10 @@ def good_annotation_locations(item, annotate_first=True):
 
 
 def generate_item_annotations(item, best_locations=True):
-    def get_tagid(i):
-        fragment = item.ptree.page.parsed_body[item.ptree.index[i]]
+    def get_tagid(node):
+        fragment = item.ptree.page.parsed_body[item.ptree.index[node]]
         if not isinstance(fragment, sy.htmlpage.HtmlTag):
-            return get_tagid(item.ptree.parents[i])
+            return get_tagid(item.ptree.parents[node])
         return fragment.attributes[slyd.utils.TAGID]
 
     container_node = item.ptree.common_ascendant(
@@ -274,12 +274,25 @@ def generate_item_annotations(item, best_locations=True):
             yield {
                 'annotations': {annotate: field_name},
                 'id': '{0}-instance-{1}'.format(field_name, i),
-                'tagid': get_tagid(fragment),
+                'tagid': get_tagid(field_location.node),
                 'item_container': False,
                 'container_id': item_name,
                 'item_id': item.name,
                 'ptree_node': field_location.node
             }
+
+
+def merge_tagid_annotations(annotations):
+    """If there are several annotations on the same tagid, merge them"""
+    group_by_tagid = collections.defaultdict(list)
+    for annotation in annotations:
+        group_by_tagid[annotation['tagid']].append(annotation)
+    for tagid, annotations_on_tagid in group_by_tagid.iteritems():
+        first_annotation = annotations_on_tagid[0]
+        if len(annotations_on_tagid) > 1:
+            for other_annotation in annotations_on_tagid[1:]:
+                first_annotation['annotations'].update(other_annotation['annotations'])
+        yield first_annotation
 
 
 def generate_project(name='AILE', version='1.0', comment=''):
@@ -384,7 +397,7 @@ def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2, ma
             continue
         if max_item_fields is not None and len(item.fields) > max_item_fields:
             continue
-        annotations += generate_item_annotations(item)
+        annotations += merge_tagid_annotations(generate_item_annotations(item))
     annotations = merge_containers(annotations)
     with open(os.path.join(path, 'annotation-all-items.json'), 'w') as annotation_file:
         json.dump(annotations, annotation_file, indent=4, sort_keys=True)
