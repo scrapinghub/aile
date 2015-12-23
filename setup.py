@@ -25,6 +25,9 @@ setup(
         'networkx',
         'pulp'
     ],
+    tests_requires = [
+        'pytest'
+    ],
     ext_modules = cythonize(extensions),
     scripts = ['scripts/gen-slybot-project']
 )

@@ -4,6 +4,7 @@ scipy>=0.15.1
 scikit-learn>=0.17
 cython>=0.23.3
 networkx>=1.10
+pulp>=1.6.0
 # For demo2
 matplotlib>=1.4.3
 ete2>=2.3.10
