@@ -364,7 +364,8 @@ def merge_containers(annotations):
                   key=lambda annotation: annotation.get('item_id', ''))
 
 
-def generate_slybot(item_extract, path='./slybot-project', min_item_fields=2, max_item_fields=50):
+def generate_slybot(item_extract, path='./slybot-project',
+                    min_item_fields=2, max_item_fields=None):
     """Warning: modifies item_extract.page_tree.page"""
     slyd.utils.add_tagids(item_extract.page_tree.page)
 

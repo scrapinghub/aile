@@ -25,3 +25,5 @@ def generate_slybot_project(url, path='slybot-project', verbose=False):
     t1 = time.clock()
     slybot.generate_slybot(ie, path)
     _print('done ({0}s)\n'.format(time.clock() - t1))
+
+    return ie
