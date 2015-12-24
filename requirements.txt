@@ -5,8 +5,8 @@ scikit-learn>=0.17
 cython>=0.23.3
 networkx>=1.10
 pulp>=1.6.0
--e git+https://github.com/scrapinghub/portia.git#egg=slyd&subdirectory=slyd
--e git+https://github.com/scrapinghub/portia.git#egg=slybot&subdirectory=slybot
+-e git+https://github.com/scrapinghub/portia.git@multiple-item-extraction#egg=slyd&subdirectory=slyd
+-e git+https://github.com/scrapinghub/portia.git@multiple-item-extraction#egg=slybot&subdirectory=slybot
 # For demo2
 matplotlib>=1.4.3
 ete2>=2.3.10
