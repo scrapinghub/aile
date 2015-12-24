@@ -18,7 +18,7 @@ def get_local_url(filename):
 def item_name(schema, item):
     for field in item.keys():
         for name, fields in schema.iteritems():
-            if field == name:
+            if field in fields:
                 return name
     return None
 
@@ -34,6 +34,7 @@ def extract_all_items(url):
         item_name: set(item['fields'])
         for item_name, item in schema.iteritems()}
     opt = [
+        '-s LOG_LEVEL=CRITICAL',
         '-s SLYDUPEFILTER_ENABLED=0',
         '-s PROJECT_DIR={0}'.format(project_path),
         '-o {0}'.format(extract_path)
@@ -45,12 +46,12 @@ def extract_all_items(url):
         items = json.load(extract_file)
     shutil.rmtree(project_path)
     os.remove(extract_path)
-    
+
     grouped_items = collections.defaultdict(list)
     for item in items:
         name = item_name(schema, item)
         if name:
-            grouped_items[name].append(item)       
+            grouped_items[name].append(item)
     return grouped_items.values()
 
 
@@ -76,7 +77,7 @@ def _check_extraction(items, true_items):
         return False
     for extracted, true in zip(items, true_items):
         for field, true_value in zip(fields, true):
-            if extracted[field].strip() != true_value:
+            if extracted[field][0].strip() != true_value:
                 return False
     return True
 

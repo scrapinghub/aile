@@ -25,6 +25,10 @@ setup(
         'networkx',
         'pulp'
     ],
+    dependency_links = [
+        'git+https://github.com/scrapinghub/portia.git#egg=slyd&subdirectory=slyd',
+        'git+https://github.com/scrapinghub/portia.git#egg=slybot&subdirectory=slybot'
+    ],
     tests_requires = [
         'pytest'
     ],
