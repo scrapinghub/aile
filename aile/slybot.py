@@ -77,6 +77,68 @@ class Field(object):
         }
 
 
+def item_location_tags(ptree, location):
+    last = location[-1]
+    tags = ptree.page.parsed_body[
+        ptree.index[location[0]]:
+        ptree.index[max(last + 1, ptree.match[last])]]
+    return tags
+
+
+def kmp_search(text, pattern):
+    """Adaptated from:
+    http://code.activestate.com/recipes/117214-knuth-morris-pratt-string-matching/
+    """
+    m = len(pattern)
+    # build table of shift amounts
+    shifts = [1] * (m + 1)
+    shift = 1
+    for pos in range(m):
+        while shift <= pos and pattern[pos] != pattern[pos-shift]:
+            shift += shifts[pos-shift]
+        shifts[pos+1] = shift
+
+    # do the actual search
+    startPos = 0
+    matchLen = 0
+    for c in text:
+        while matchLen == m or \
+              matchLen >= 0 and pattern[matchLen] != c:
+            startPos += shifts[matchLen]
+            matchLen -= shifts[matchLen]
+        matchLen += 1
+        if matchLen == m:
+            yield startPos
+
+
+def common_prefix(sequences):
+    """Given a set of sequences, find the common prefix"""
+    def all_equal(sequence):
+        for element in sequence[1:]:
+            if element != sequence[0]:
+                return False
+        return True
+    common = []
+    for x in zip(*sequences):
+        if all_equal(x):
+            common.append(x[0])
+    return common
+
+
+def common_suffix(sequences):
+    return list(reversed(common_prefix(map(reversed, sequences))))
+
+
+def suffix_jump(sequence, suffix):
+    n = 0
+    for pos in kmp_search(sequence, suffix):
+        n += 1
+        if n > 1:
+            return prev_pos
+        prev_pos = pos
+    return 0
+
+
 class Item(object):
     def __init__(self, name, ptree, locations, fields):
         self.name = name
@@ -84,9 +146,35 @@ class Item(object):
         self.locations = locations
         self.fields = fields
 
+        self.common_prefix = self._common_prefix()
+        self.common_suffix = self._common_suffix()
+        self.min_jump = self._min_jump()
+
     @property
     def dict(self):
         return {'fields': {field.name: field.dict for field in self.fields}}
+
+    def _common_prefix(self):
+        """Given the locations of this item, find the common prefix
+        of all instances"""
+        return common_prefix(
+            item_location_tags(self.ptree, location)
+            for location in self.locations)
+
+    def _common_suffix(self):
+        """Given the locations of this item, find the common suffix
+        of all instances"""
+        return common_prefix(
+            item_location_tags(self.ptree, location)
+            for location in self.locations)
+
+    def _min_jump_location(self, location):
+        return suffix_jump(
+            item_location_tags(self.ptree, location), self.common_suffix)
+
+    def _min_jump(self):
+        return max(self._min_jump_location(location)
+                   for location in self.locations)
 
 
 def is_non_empty_text(page, fragment):
@@ -245,7 +333,8 @@ def generate_item_annotations(item, best_locations=True):
         'container_id': container_name,
         'item_id': item.name,
         'repeated': True,
-        'ptree_node': location[0]
+        'ptree_node': location[0],
+        'min_jump': item.min_jump
     }
     if len(location) > 1:
         annotation['siblings'] = len(location) - 1

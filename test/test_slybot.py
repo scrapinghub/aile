@@ -8,8 +8,13 @@ import contextlib
 import aile
 
 
+try:
+    FILE = __file__
+except NameError:
+    FILE = './test'
+
 TESTDIR = os.getenv('DATAPATH',
-                    os.path.dirname(os.path.realpath(__file__)))
+                    os.path.dirname(os.path.realpath(FILE)))
 
 
 def get_local_url(filename):
@@ -84,10 +89,19 @@ def _check_extraction(items, true_items):
         return False
     if len(items) != len(true_items):
         return False
-    for extracted, true in zip(items, true_items):
-        for field, true_value in zip(fields, true):
-            if extracted[field][0].strip() != true_value:
-                return False
+    for true in true_items:
+        any_match = False
+        for extracted in items:
+            match = True
+            for field, true_value in zip(fields, true):
+                if extracted[field][0].strip() != true_value:
+                    match = False
+                    break
+            if match:
+                any_match = True
+        if not any_match:
+            import pdb; pdb.set_trace()
+            return False
     return True
 
 
@@ -99,7 +113,7 @@ def check_extraction(all_items, true_items):
 def test_patchofland():
     with contextlib.closing(ExtractTest('Patch of Land.html')) as test:
         check_extraction(
-            test.run('Patch of Land 2.html'),
+            test.run('Patch of Land.html'),
             [['158 Halsey Street, Brooklyn, New York'],
              ['695 Monroe Street, Brooklyn, New York'],
              ['138 Wood Road, Los Gatos, California'],
