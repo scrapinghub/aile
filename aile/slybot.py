@@ -334,7 +334,8 @@ def generate_item_annotations(item, best_locations=True):
         'item_id': item.name,
         'repeated': True,
         'ptree_node': location[0],
-        'min_jump': item.min_jump
+        'min_jump': item.min_jump,
+        'max_separator': 0
     }
     if len(location) > 1:
         annotation['siblings'] = len(location) - 1
