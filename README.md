@@ -1,4 +1,4 @@
-# Automatic Item List Extracation
+# Automatic Item List Extraction [![Build Status](https://travis-ci.org/scrapinghub/aile.svg?branch=master)](https://travis-ci.org/scrapinghub/aile)
 
 This repository is a temporary container for experiments in automatic extraction of list and tables from web pages.
 At some later point I will merge the surviving algorithms either in [scrapely](https://github.com/scrapy/scrapely)
