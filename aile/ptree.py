@@ -209,4 +209,4 @@ class PageTree(object):
         s = set(range(self.n_nodes))
         for node in nodes:
             s &= set(self.prefix(node))
-        return max(s)
+        return max(s) if s else -1

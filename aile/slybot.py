@@ -314,6 +314,8 @@ def generate_item_annotations(item, best_locations=True):
 
     container_node = item.ptree.common_ascendant(
         location[0] for location in item.locations)
+    if container_node == -1:
+        return
     container_name = 'aile-container-{0}'.format(item.name)
     yield {
         'annotations': {'content': '#listitem'},
