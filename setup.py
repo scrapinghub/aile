@@ -1,3 +1,4 @@
+import sys
 from setuptools import setup
 from setuptools.extension import Extension
 from Cython.Build import cythonize
@@ -12,7 +13,7 @@ extensions = [
     ),
 ]
 
-setup(
+setup_options = dict(
     name = 'AILE',
     version = '0.0.1',
     packages = ['aile'],
@@ -35,3 +36,16 @@ setup(
     ext_modules = cythonize(extensions),
     scripts = ['scripts/gen-slybot-project']
 )
+
+
+# stolen from https://github.com/larsmans/seqlearn/blob/master/setup.py:
+# For these actions, NumPy is not required. We want them to succeed without,
+# for example when pip is used to install seqlearn without NumPy present.
+NO_NUMPY_ACTIONS = ('--help-commands', 'egg_info', '--version', 'clean')
+if not ('--help' in sys.argv[1:]
+        or len(sys.argv) > 1 and sys.argv[1] in NO_NUMPY_ACTIONS):
+    import numpy
+    setup_options['include_dirs'] = [numpy.get_include()]
+
+
+setup(**setup_options)
