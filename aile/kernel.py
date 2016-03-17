@@ -141,12 +141,25 @@ class TreeClustering(object):
         and DBSCAN applied to the result. Finally, we enforce the constraint
         that a node cannot be inside the same cluster of any of its ascendants.
 
-        X                  : kernel
-        min_cluster_size   : parameter to DBSCAN
-        eps                : parameter to DBSCAN
-        d1                 : weight of distance computed form X
-        d2                 : weight of distance computed from tree size
-        separate_ascendants: True to enfonce the cannot-link constraints
+        Parameters
+        ---------
+        X : np.array
+            Kernel matrix
+        min_cluster_size : int
+            Parameter to DBSCAN
+        eps : int
+            Parameter to DBSCAN
+        d1 : float
+            Weight of distance computed from X
+        d2 : float
+            Weight of distance computed from tree size
+        separate_ascendants: bool
+            True to enfonce the cannot-link constraints
+
+        Returns
+        -------
+        np.array
+            A label for each sample
         """
         Y = boost(tree_size_distance(self.page_tree), 2)
         D = d1*X + d2*Y
@@ -167,8 +180,11 @@ class TreeClustering(object):
 def cluster(page_tree, K, eps=1.2, d1=1.0, d2=0.1, separate_descendants=True):
     """Asign to each node in the tree a cluster label.
 
-    Returns: for each node a label id. Label ID -1 means that the node
-    is an outlier (it isn't part of any cluster).
+    Returns
+    -------
+    np.array
+        For each node a label id. Label ID -1 means that the node
+        is an outlier (it isn't part of any cluster).
     """
     return TreeClustering(page_tree).fit_predict(
         kernel_to_distance(normalize_kernel(K)),
@@ -258,8 +274,10 @@ def extract_items_with_label(ptree, labels, label_to_extract):
     """Extract all items inside the labeled PageTree that are marked or have
     a sibling that is marked with label_to_extract.
 
-    Returns: a list of tuples, where each tuple are the roots of the extracted
-    subtrees.
+    Returns
+    -------
+    List[tuple]
+        Where each tuple is the roots of the extracted subtrees.
     """
     items = []
     i = 0
@@ -413,8 +431,11 @@ def find_cliques(G, min_size):
     """Find all cliques in G above a given size.
 
     If a node is part of a larger clique is deleted from the smaller ones.
-    Returns:
-        A dictionary mapping nodes to clique ID
+
+    Returns
+    -------
+    dict
+        Mapping nodes to clique ID
     """
     cliques = []
     for K in nx.find_cliques(G):
@@ -483,9 +504,20 @@ class ItemExtract(object):
                  c_eps=1.2, c_d1=1.0, c_d2=1.0, separate_descendants=True):
         """Perform all extraction operations in sequence.
 
-        Parameters:
-            k_*: parameters to kernel computation
-            c_*: parameters to clustering
+        Parameters
+        ----------
+        k_max_depth : int
+            Parameter to kernel computation
+        k_decay : float
+            Parameter to kernel computation
+        c_eps : float
+            Parameter to clustering
+        c_d1 : float
+            Parameter to clustering
+        c_d2 : float
+            Parameter to clustering
+        separate_descendants : bool
+            Parameter to clustering
         """
         self.page_tree = page_tree
         self.kernel = _ker.kernel(page_tree, max_depth=k_max_depth, decay=k_decay)

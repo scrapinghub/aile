@@ -7,9 +7,12 @@ import scrapely.htmlpage as hp
 def match_fragments(fragments, max_backtrack=20):
     """Find the closing fragment for every fragment.
 
-    Returns: an array with as many elements as fragments. If the
-    fragment has no closing pair then the array contains -1 at that position
-    otherwise it contains the index of the closing pair.
+    Returns
+    -------
+    numpy.array
+        With as many elements as fragments. If the fragment has no
+        closing pair then the array contains -1 at that position
+        otherwise it contains the index of the closing pair
     """
     match = np.repeat(-1, len(fragments))
     stack = []
@@ -100,19 +103,19 @@ class PageTree(object):
         index, self.nodes = zip(*tree_nodes(page))
         self.index = np.array(index)
         self.n_nodes = len(self.nodes)
-        reverse_index = np.repeat(-1, len(page.parsed_body))
+        self.reverse_index = np.repeat(-1, len(page.parsed_body))
         for i, idx in enumerate(self.index):
-            reverse_index[idx] = i
+            self.reverse_index[idx] = i
         match = match_fragments(page.parsed_body)
         self.match = np.repeat(-1, self.n_nodes)
         self.parents = np.repeat(-1, self.n_nodes)
         for i, m in enumerate(match):
-            j = reverse_index[i]
+            j = self.reverse_index[i]
             if j >= 0:
                 if m >= 0:
                     k = -1
                     while k < 0:
-                        k = reverse_index[m]
+                        k = self.reverse_index[m]
                         m += 1
                         if m == len(match):
                             k = len(self.match)

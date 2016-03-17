@@ -2,7 +2,7 @@ import time
 
 import scrapely
 
-from . import slybot
+from . import slybot_project
 from . import kernel
 from . import ptree
 
@@ -23,7 +23,7 @@ def generate_slybot_project(url, path='slybot-project', verbose=False):
 
     _print('Generating slybot project...')
     t1 = time.clock()
-    slybot.generate_slybot(ie, path)
+    slybot_project.generate(ie, path)
     _print('done ({0}s)\n'.format(time.clock() - t1))
 
     return ie

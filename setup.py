@@ -14,7 +14,7 @@ extensions = [
 
 setup(
     name = 'AILE',
-    version = '0.0.1',
+    version = '0.0.2',
     packages = ['aile'],
     install_requires = [
         'numpy',
